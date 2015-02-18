@@ -19,13 +19,12 @@ package org.locationtech.geomesa.raster.data
 
 import com.google.common.collect.ImmutableSetMultimap
 import com.typesafe.scalalogging.slf4j.Logging
+import com.vividsolutions.jts.geom.Geometry
 import org.apache.accumulo.core.client.IteratorSetting
 import org.apache.accumulo.core.data.{Range => ARange}
 import org.apache.hadoop.io.Text
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
-import org.geotools.geometry.jts.ReferencedEnvelope
-import org.geotools.referencing.crs.DefaultGeographicCRS
 import org.locationtech.geomesa.core._
 import org.locationtech.geomesa.core.index._
 import org.locationtech.geomesa.core.iterators._
@@ -58,40 +57,34 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
 
     // Step 1. Pick resolution
 
-    // JNH: rename getResolution to selectResolution?
-    val selectedRes: Double = getResolution(rq.resolution, availableResolutions)
+    val selectedRes: Double = selectResolution(rq.resolution, availableResolutions)
     val res = lexiEncodeDoubleToString(selectedRes)
 
-    // Step 2. Pick GeoHashLength, this will need to pick the smallest val if a mulitmap
+    // Step 2. Pick GeoHashLength
     val GeoHashLenList = resAndGeoHashMap.get(selectedRes).toList
     val expectedGeoHashLen = if (GeoHashLenList.isEmpty) {
       0
     } else {
-      GeoHashLenList.min
+      GeoHashLenList.max
     }
 
     // Step 3. Given an expected Length and the query, pad up or down the CAGH
     val closestAcceptableGeoHash = GeohashUtils.getClosestAcceptableGeoHash(rq.bbox)
-    val bboxHashes = BoundingBox.getGeoHashesFromBoundingBox(rq.bbox)
 
     val hashes: List[String] = closestAcceptableGeoHash match {
       case Some(gh) =>
-        if (rq.bbox.equals(gh.bbox)) {
-          List(gh.hash)
+        val preliminaryHashes = List(gh.hash)
+        if (rq.bbox.equals(gh.bbox) || gh.bbox.covers(rq.bbox)) {
+          preliminaryHashes
         } else {
-          val preliminaryhashes = bboxHashes :+ gh.hash
-          if(gh.bbox.covers(rq.bbox)) {
-            preliminaryhashes.distinct
-          } else {
-            val touching = TouchingGeoHashes.touching(gh).map(_.hash)
-            (preliminaryhashes ++ touching).distinct
-          }
+          val touching = TouchingGeoHashes.touching(gh).map(_.hash)
+          (preliminaryHashes ++ touching).distinct
         }
-      case        _ => bboxHashes.toList
+      case _ => BoundingBox.getGeoHashesFromBoundingBox(rq.bbox)
     }
 
     logger.debug(s"RasterQueryPlanner: BBox: ${rq.bbox} has geohashes: $hashes, and has encoded Resolution: $res")
-
+    println(s"Scanning at res: $selectedRes, with hashes: $hashes")
     val r = hashes.map { gh => modifyHashRange(gh, expectedGeoHashLen, res) }.distinct
 
     // of the Ranges enumerated, get the merge of the overlapping Ranges
@@ -100,7 +93,7 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
 
     // setup the RasterFilteringIterator
     val cfg = new IteratorSetting(90, "raster-filtering-iterator", classOf[RasterFilteringIterator])
-    configureRasterFilter(cfg, constructFilter(getReferencedEnvelope(rq.bbox), indexSFT))
+    configureRasterFilter(cfg, constructFilter(rq.bbox, indexSFT))
     configureRasterMetadataFeatureType(cfg, indexSFT)
 
     // TODO: WCS: setup a CFPlanner to match against a list of strings
@@ -108,10 +101,7 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
     QueryPlan(Seq(cfg), rows, Seq())
   }
 
-  def getLexicodedResolution(suggestedResolution: Double, availableResolutions: List[Double]): String =
-    lexiEncodeDoubleToString(getResolution(suggestedResolution, availableResolutions))
-
-  def getResolution(suggestedResolution: Double, availableResolutions: List[Double]): Double = {
+  def selectResolution(suggestedResolution: Double, availableResolutions: List[Double]): Double = {
     logger.debug(s"RasterQueryPlanner: trying to get resolution $suggestedResolution " +
       s"from available Resolutions: ${availableResolutions.sorted}")
     val ret = availableResolutions match {
@@ -129,22 +119,8 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
     ret
   }
 
-  def constructFilter(ref: ReferencedEnvelope, featureType: SimpleFeatureType): Filter = {
-    val ff = CommonFactoryFinder.getFilterFactory2
-
-    // JNH: NOT TOUCHING!
-    // TODO: Clean this up.
-    val bboxf = ff.bbox(ff.property(featureType.getGeometryDescriptor.getLocalName), ref)
-
-    val geom = BoundingBox(ref).geom
-
-    val wktwriter = new com.vividsolutions.jts.io.WKTWriter
-    val wkt = wktwriter.write(geom)
-
-    val fString = s"INTERSECTS(${featureType.getGeometryDescriptor.getLocalName}, $wkt) AND " +
-      s"NOT TOUCHES(${featureType.getGeometryDescriptor.getLocalName}, $wkt) "
-
-    ECQL.toFilter(fString)
+  def constructFilter(bbox: BoundingBox, featureType: SimpleFeatureType): Filter = {
+    AccumuloRasterQueryPlanner.constructRasterFilter(bbox.geom, featureType)
   }
 
   def configureRasterFilter(cfg: IteratorSetting, filter: Filter) = {
@@ -157,9 +133,15 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
     cfg.encodeUserData(featureType.getUserData, GEOMESA_ITERATORS_SIMPLE_FEATURE_TYPE)
   }
 
-  def getReferencedEnvelope(bbox: BoundingBox): ReferencedEnvelope = {
-    val env = bbox.envelope
-    new ReferencedEnvelope(env.getMinX, env.getMaxX, env.getMinY, env.getMaxY, DefaultGeographicCRS.WGS84)
+}
+
+object AccumuloRasterQueryPlanner {
+  val ff = CommonFactoryFinder.getFilterFactory2
+
+  def constructRasterFilter(geom: Geometry, featureType: SimpleFeatureType): Filter = {
+    val property = ff.property(featureType.getGeometryDescriptor.getLocalName)
+    val bounds = ff.literal(geom)
+    ff.and(ff.intersects(property, bounds), ff.not(ff.touches(property, bounds)))
   }
 
 }
