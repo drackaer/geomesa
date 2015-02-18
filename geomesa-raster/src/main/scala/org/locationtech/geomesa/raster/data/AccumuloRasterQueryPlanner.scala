@@ -93,7 +93,7 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
 
     // setup the RasterFilteringIterator
     val cfg = new IteratorSetting(90, "raster-filtering-iterator", classOf[RasterFilteringIterator])
-    configureRasterFilter(cfg, constructFilter(rq.bbox, indexSFT))
+    configureRasterFilter(cfg, AccumuloRasterQueryPlanner.constructRasterFilter(rq.bbox.geom, indexSFT))
     configureRasterMetadataFeatureType(cfg, indexSFT)
 
     // TODO: WCS: setup a CFPlanner to match against a list of strings
@@ -117,10 +117,6 @@ case class AccumuloRasterQueryPlanner(schema: RasterIndexSchema) extends Logging
     }
     logger.debug(s"RasterQueryPlanner: Decided to use resolution: $ret")
     ret
-  }
-
-  def constructFilter(bbox: BoundingBox, featureType: SimpleFeatureType): Filter = {
-    AccumuloRasterQueryPlanner.constructRasterFilter(bbox.geom, featureType)
   }
 
   def configureRasterFilter(cfg: IteratorSetting, filter: Filter) = {
