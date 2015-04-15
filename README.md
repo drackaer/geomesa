@@ -10,7 +10,7 @@ Version | Status
 
 ![Splash](http://geomesa.github.io/img/geomesa-overview-848x250.png)
 
-GeoMesa is an open-source, distributed, spatio-temporal database built on top of the Apache Accumulo column family store. GeoMesa implements standard Geotools interfaces to provide geospatial functionality over very large data sets to application developers.  GeoMesa provides plugins for exposing geospatial data stored in Accumulo via standards-based OGC HTTP services and cluster monitoring and management tools within the GeoServer administrative interface.  
+GeoMesa is an open-source, distributed, spatio-temporal database built on top of the Apache Accumulo column family store. GeoMesa implements standard Geotools interfaces to provide geospatial functionality over very large data sets to application developers.  GeoMesa provides plugins for exposing geospatial data stored in Accumulo via standards-based OGC HTTP services within the GeoServer administrative interface.
 
 #### ![LocationTech](https://pbs.twimg.com/profile_images/2552421256/hv2oas84tv7n3maianiq_normal.png) GeoMesa is a member of the [LocationTech](http://www.locationtech.org) working group of the Eclipse Foundation.
 
@@ -42,37 +42,65 @@ From the root directory, this builds each sub-project with its additional depend
 * GeoMesa [Users](https://locationtech.org/mhonarc/lists/geomesa-users/) and [Dev](https://locationtech.org/mhonarc/lists/geomesa-dev/) mailing list archives
 * READMEs are provided under most modules: [Tools](geomesa-tools), [Jobs](geomesa-jobs), etc
 
+## Scala console via scala-maven-plugin
+
+To test and interact with core functionality, the Scala console can be invoked in a couple of ways.  From the root directory by specifying geomesa-core ```geomesa> mvn -pl geomesa-core scala:console```.  Or from a given sub-project's directory ```geomesa-core> mvn scala:console```.  By default, all of the project packages in ```core``` are loaded along with JavaConversions, JavaConverters.
+
 ## GeoMesa Project Structure
 
-#### geomesa-core
+#### geomesa-assemble
 
-This project contains the implementations of the core indexing structures, Accumulo iterators, and the GeoTools interfaces for exposing the functionality as a ```DataStore``` to both application developers and GeoServer.
-
-##### Scala console via scala-maven-plugin
-
-To test and interact with core functionality, the Scala console can be invoked in a couple of ways.  From the root directory by specifying geomesa-core ```geomesa> mvn -pl geomesa-core scala:console```.  Or from the sub-project's directory ```geomesa-core> mvn scala:console```.  By default, all of the project packages in ```core``` are loaded along with JavaConversions, JavaConverters.
-
-#### geomesa-distributed-runtime
-
-This sub-project assembles a jar with dependencies that must be distributed to Accumulo tablet servers lib/ext
-directory or to an HDFS directory where Accumulo's VFSClassLoader can pick it up.
-
-#### geomesa-plugin
-
-This sub-project creates a plugin which provides WFS and WMS support.  The JAR named geomesa-plugin-<Version>-geoserver-plugin.jar is ready to be deployed in GeoServer by copying it into geoserver/WEB-INF/lib/
-
-#### geomesa-utils
-
-This sub-project stores our GeoHash implementation and other general library functions unrelated to Accumulo. This sub-project contains any helper tools for geomesa.  Some of these tools such as the GeneralShapefileIngest have Map/Reduce components, so the geomesa-utils JAR lives on HDFS.
-
-#### geomesa-dist
-
-This sub-project contains the distribution-ready TAR-ball as well as the documentation (in DocBook form, rendered to PDF).
+This sub-project assembles a tarball containing the commandline tools along with the distributed runtime, geoserver, and compute Jars with the associated readme files.
 
 #### geomesa-compute
 
 This sub-project contains utilities for working with distributed computing environments.  Currently, there are methods for instantiating an Apache Spark Resilient Distributed Dataset from a CQL query against data stored in GeoMesa.  Eventually, this project will contain bindings for traditional map-reduce processing, Scalding, and other environments.
 
+#### geomesa-convert
+
+This sub-prohect contains a configurable and extensible library for converting data sources in various formats into SimpleFeatures.
+
+#### geomesa-core
+
+This project contains the implementations of the core indexing structures, Accumulo iterators, and the GeoTools interfaces for exposing the functionality as a ```DataStore``` to both application developers and GeoServer.
+
+#### geomesa-distributed-runtime
+
+This sub-project assembles a jar with dependencies that must be distributed to Accumulo tablet servers' lib/ext
+directory or to an HDFS directory where Accumulo's VFSClassLoader can pick it up.
+
+#### geomesa-feature
+
+This sub-project stores our implementation of a serializable SimpleFeature, including Kryo and Avro based implementations.
+
+#### geomesa-filter
+
+TODO: explain geomesa-filter
+
+#### geomesa-jobs
+
+This sub-project holds map/reduce and scalding jobs for maintaining GeoMesa. It includes jobs that transition tables between versions of GeoMesa when breaking changes are introduced.
+
+#### geomesa-kafka
+
+This sub-project contains our geomesa-kafka data store and builds the GeoServer plugin associated with it.
+
+#### geomesa-plugin
+
+This sub-project creates a plugin which provides WFS and WMS support.  The JAR named geomesa-plugin-<Version>-geoserver-plugin.jar is ready to be deployed in GeoServer by copying it into geoserver/WEB-INF/lib/ directory.
+
+#### geomesa-process
+
+This sub-project holds several analytic processes optimized for GeoMesa data stores including: KNN, Density, Temporal Density, and Tube Select among others.
+
 #### geomesa-tools
 
 This sub-project contains a set of command line tools for managing features, ingesting and exporting data, configuring tables, and explaining queries in GeoMesa. Please view the [geomesa-tools README](https://github.com/locationtech/geomesa/tree/accumulo1.5.x/1.x/geomesa-tools#geomesa-tools) to learn more.
+
+#### geomesa-utils
+
+This sub-project stores our GeoHash implementation and other general library functions unrelated to Accumulo.
+
+#### geomesa-web
+
+TODO: explain geomesa-web
