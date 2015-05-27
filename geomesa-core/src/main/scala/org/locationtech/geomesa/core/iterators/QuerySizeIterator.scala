@@ -52,10 +52,11 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
 //    filter.evaluate(featureToInspect)
     featureBuilder.reset()
     topKey = new Key(source.getTopKey)  // JNH: Feel free to ask me about this later.
-    val bytes = new Array[Byte](8)
-    ByteBuffer.wrap(bytes).putInt(5)
-  
-    featureBuilder.set("scanSizeBytes", 5)
+
+    featureBuilder.set(SCAN_BYTES_ATTRIBUTE, 5)
+    featureBuilder.set(RESULT_BYTES_ATTRIBUTE, 3)
+    featureBuilder.set(SCAN_RECORDS_ATTRIBUTE, 10)
+    featureBuilder.set(RESULT_RECORDS_ATTRIBUTE, 2)
     val feature = featureBuilder.buildFeature("feature")
 
     topValue = new Value(querySizeFeatureEncoder.encode(feature))
@@ -64,6 +65,10 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
 }
 
 object QuerySizeIterator {
-  val QUERY_SIZE_FEATURE_SFT_STRING =  "geom:Geometry:srid=4326,dtg:Date,dtg_end_time:Date,scanSizeBytes:Long"
+  val QUERY_SIZE_FEATURE_SFT_STRING =  "geom:Geometry:srid=4326,dtg:Date,dtg_end_time:Date,scanSizeBytes:Long,resultSizeBytes:Long,scanNumRecords:Long,resultNumRecords:Long"
   val querySizeSFT = SimpleFeatureTypes.createType("querySize", QUERY_SIZE_FEATURE_SFT_STRING)
+  val SCAN_BYTES_ATTRIBUTE = "scanSizeBytes"
+  val SCAN_RECORDS_ATTRIBUTE = "scanNumRecords"
+  val RESULT_BYTES_ATTRIBUTE = "resultSizeBytes"
+  val RESULT_RECORDS_ATTRIBUTE = "resultNumRecords"
 }

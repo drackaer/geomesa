@@ -81,15 +81,17 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
 
       val result = results.head
 
-      val scanSizeBytes = result.getAttribute("scanSizeBytes").asInstanceOf[Long]
-//      val scanRecords = result.getAttribute("scanRecords").asInstanceOf[Long]
-//      val returnSizeBytes = result.getAttribute("returnSizeBytes").asInstanceOf[Long]
-//      val returnRecords = result.getAttribute("returnRecords").asInstanceOf[Long]
+      val scanSizeBytes = result.getAttribute(QuerySizeIterator.SCAN_BYTES_ATTRIBUTE).asInstanceOf[Long]
+      val scanRecords = result.getAttribute(QuerySizeIterator.SCAN_RECORDS_ATTRIBUTE).asInstanceOf[Long]
+      val returnSizeBytes = result.getAttribute(QuerySizeIterator.RESULT_BYTES_ATTRIBUTE).asInstanceOf[Long]
+      val returnRecords = result.getAttribute(QuerySizeIterator.RESULT_RECORDS_ATTRIBUTE).asInstanceOf[Long]
 
-      scanSizeBytes should be equalTo 5
-//      scanRecords should be equalTo 5
-//      returnSizeBytes should be equalTo 5
-//      returnRecords should be equalTo 5
+      val numRecords = 150
+
+      scanSizeBytes should be equalTo (5*numRecords)
+      scanRecords should be equalTo (10*numRecords)
+      returnSizeBytes should be equalTo (3*numRecords)
+      returnRecords should be equalTo (2*numRecords)
     }
 
 //    "correctly filter dates" in {
