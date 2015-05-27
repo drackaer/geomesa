@@ -16,23 +16,19 @@
 
 package org.locationtech.geomesa.core.iterators
 
-import java.nio.ByteBuffer
 import java.util
 import java.util.{Collection => jCollection}
 
 import org.apache.accumulo.core.data.{Range => AccRange, _}
 import org.apache.accumulo.core.iterators.{IteratorEnvironment, SortedKeyValueIterator}
-import org.apache.hadoop.io.Text
 import org.geotools.feature.simple.SimpleFeatureBuilder
-import org.locationtech.geomesa.core.iterators.RowSkippingIterator._
-import org.locationtech.geomesa.feature.{FeatureEncoding, SimpleFeatureEncoder}
+import org.locationtech.geomesa.core
+import org.locationtech.geomesa.core.iterators.QuerySizeIterator._
+import org.locationtech.geomesa.feature.{SimpleFeatureDecoder, FeatureEncoding, SimpleFeatureEncoder}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 
-import scala.collection.SortedSet
-import QuerySizeIterator._
-
 /**
- * Iterator that returns number and size of results filtered and results returned.
+ * Iterator that returns counts and size-in-bytes of both results filtered and results returned.
  */
 class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder with HasFilter with HasFeatureType {
 
@@ -41,6 +37,11 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
 
   override def init(source: SortedKeyValueIterator[Key, Value], options: util.Map[String, String], env: IteratorEnvironment): Unit = {
     super.init(source, options, env)
+    initFeatureType(options)
+    val originalSFT = SimpleFeatureTypes.createType("QuerySizeHijackedIteratorSFT",options.get(core.GEOMESA_ITERATORS_SIMPLE_FEATURE_TYPE))
+    super[HasFilter].init(originalSFT, options)
+    super[HasFeatureDecoder].init(originalSFT, options)
+
     featureBuilder = new SimpleFeatureBuilder(querySizeSFT)
     querySizeFeatureEncoder = SimpleFeatureEncoder(querySizeSFT, FeatureEncoding.KRYO)
   }
@@ -54,9 +55,18 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
     topKey = new Key(source.getTopKey)  // JNH: Feel free to ask me about this later.
 
     featureBuilder.set(SCAN_BYTES_ATTRIBUTE, 5)
-    featureBuilder.set(RESULT_BYTES_ATTRIBUTE, 3)
     featureBuilder.set(SCAN_RECORDS_ATTRIBUTE, 10)
-    featureBuilder.set(RESULT_RECORDS_ATTRIBUTE, 2)
+
+    var resultBytes: Long = 0
+    var resultRecords: Long = 0
+    val featureDecoded = featureDecoder.decode(source.getTopValue.get)
+
+    if (filter.evaluate(source.getTopValue)) {
+      resultBytes = 3
+      resultRecords = 2
+    }
+    featureBuilder.set(RESULT_BYTES_ATTRIBUTE, resultBytes)
+    featureBuilder.set(RESULT_RECORDS_ATTRIBUTE, resultRecords)
     val feature = featureBuilder.buildFeature("feature")
 
     topValue = new Value(querySizeFeatureEncoder.encode(feature))
@@ -71,4 +81,5 @@ object QuerySizeIterator {
   val SCAN_RECORDS_ATTRIBUTE = "scanNumRecords"
   val RESULT_BYTES_ATTRIBUTE = "resultSizeBytes"
   val RESULT_RECORDS_ATTRIBUTE = "resultNumRecords"
+  val ORIGINAL_SFT_OPTION = "originalSFT"
 }

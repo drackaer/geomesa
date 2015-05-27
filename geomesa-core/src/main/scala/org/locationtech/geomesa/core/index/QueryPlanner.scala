@@ -173,7 +173,6 @@ case class QueryPlanner(sft: SimpleFeatureType,
    */
   def adaptQuerySizeIterator(accumuloIterator: KVIter, query: Query, decoder: SimpleFeatureDecoder): SFIter = {
 
-    // TODO - implement client-side reduce
     val querySizeIterator = accumuloIterator.map { kv =>
       decoder.decode(kv.getValue.get)
     }
@@ -195,7 +194,7 @@ case class QueryPlanner(sft: SimpleFeatureType,
     featureBuilder.set(QuerySizeIterator.RESULT_BYTES_ATTRIBUTE, resultBytes)
     featureBuilder.set(QuerySizeIterator.RESULT_RECORDS_ATTRIBUTE, resultRecords)
 
-    CloseableIterator(Iterator(featureBuilder.buildFeature("feature")))  // TODO: Fix massive cheating.
+    CloseableIterator(Iterator(featureBuilder.buildFeature("resultFeature")))
   }
 
   def adaptTemporalIterator(accumuloIterator: KVIter,

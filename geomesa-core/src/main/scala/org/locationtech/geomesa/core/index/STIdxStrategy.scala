@@ -116,7 +116,7 @@ class STIdxStrategy extends Strategy with Logging with IndexFilterHelpers {
 
     if(query.getHints.containsKey(QUERY_SIZE_KEY)) {
       val cfg = new IteratorSetting(iteratorPriority_SimpleFeatureFilteringIterator, "query-size-iterator", classOf[QuerySizeIterator])
-      //config.addOption() // JNH: This requires the original ECQL filter.
+      //cfg.addOption(QuerySizeIterator.ORIGINAL_SFT_OPTION,sft) // JNH: This requires the original ECQL filter.
 
       val combinedFilter = (ofilter, ecql) match {
         case (Some(st), Some(ecql)) => filterListAsAnd(Seq(st, ecql))

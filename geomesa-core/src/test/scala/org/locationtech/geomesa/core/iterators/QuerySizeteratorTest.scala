@@ -77,7 +77,7 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
       val q = getQuery("(dtg between '2012-01-01T18:00:00.000Z' AND '2012-01-01T23:00:00.000Z') and BBOX(geom, -80, 33, -70, 40)")
 
       val results = fs.getFeatures(q).features().toList
-      results must haveLength(1)  // JNH: This still makes sense.  TODO: Wire up 'client-side reduce'
+      results must haveLength(1)  // JNH: This still makes sense.
 
       val result = results.head
 
@@ -87,7 +87,7 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
       val returnRecords = result.getAttribute(QuerySizeIterator.RESULT_RECORDS_ATTRIBUTE).asInstanceOf[Long]
 
       val numRecords = 150
-
+//      println(scanSizeBytes + "\t" + scanRecords + "\t" + returnSizeBytes + "\t" + returnRecords)
       scanSizeBytes should be equalTo (5*numRecords)
       scanRecords should be equalTo (10*numRecords)
       returnSizeBytes should be equalTo (3*numRecords)
