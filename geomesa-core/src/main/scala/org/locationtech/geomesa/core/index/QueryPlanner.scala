@@ -142,6 +142,8 @@ case class QueryPlanner(sft: SimpleFeatureType,
       adaptTemporalIterator(accumuloIterator, returnSFT, decoder, query.getHints.containsKey(RETURN_ENCODED))
     } else if (query.getHints.containsKey(MAP_AGGREGATION_KEY)) {
       adaptMapAggregationIterator(accumuloIterator, query, returnSFT, decoder)
+    } else if (query.getHints.containsKey(QUERY_SIZE_KEY)) {
+      adaptQuerySizeIterator(accumuloIterator, query, decoder)
     } else {
       adaptStandardIterator(accumuloIterator, query, decoder)
     }
@@ -164,6 +166,19 @@ case class QueryPlanner(sft: SimpleFeatureType,
     } else {
       features
     }
+  }
+
+  /**
+   * Standard iterator of simple features
+   */
+  def adaptQuerySizeIterator(accumuloIterator: KVIter, query: Query, decoder: SimpleFeatureDecoder): SFIter = {
+
+    // TODO - implement client-side reduce
+    val querySizeIterator = accumuloIterator.map { kv =>
+      decoder.decode(kv.getValue.get)
+    }
+
+    CloseableIterator(Iterator(querySizeIterator.next))  // TODO: Fix massive cheating.
   }
 
   def adaptTemporalIterator(accumuloIterator: KVIter,
@@ -225,6 +240,11 @@ case class QueryPlanner(sft: SimpleFeatureType,
     } else if (query.getHints.containsKey(MAP_AGGREGATION_KEY)) {
       val mapAggregationAttribute = query.getHints.get(MAP_AGGREGATION_KEY).asInstanceOf[String]
       val spec = MapAggregatingIterator.projectedSFTDef(mapAggregationAttribute, sft)
+      SimpleFeatureTypes.createType(sft.getTypeName, spec)
+    } else if (query.getHints.containsKey(QUERY_SIZE_KEY)) {
+//      val mapAggregationAttribute = query.getHints.get(MAP_AGGREGATION_KEY).asInstanceOf[String]
+//      val spec = MapAggregatingIterator.projectedSFTDef(mapAggregationAttribute, sft)
+      val spec = "geom:Geometry:srid=4326,dtg:Date,dtg_end_time:Date,scanSizeBytes:Long"
       SimpleFeatureTypes.createType(sft.getTypeName, spec)
     } else {
       getTransformSchema(query).getOrElse(sft)
