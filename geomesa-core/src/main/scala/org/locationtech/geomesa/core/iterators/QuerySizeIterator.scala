@@ -59,9 +59,8 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
 
     var resultBytes: Long = 0
     var resultRecords: Long = 0
-    val featureDecoded = featureDecoder.decode(source.getTopValue.get)
 
-    if (filter.evaluate(source.getTopValue)) {
+    if (filter.evaluate(featureDecoder.decode(source.getTopValue.get))) {
       resultBytes = 3
       resultRecords = 2
     }
