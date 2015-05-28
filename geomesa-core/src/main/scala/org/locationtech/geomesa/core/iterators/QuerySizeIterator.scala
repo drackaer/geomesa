@@ -17,14 +17,13 @@
 package org.locationtech.geomesa.core.iterators
 
 import java.util
-import java.util.{Collection => jCollection}
 
-import org.apache.accumulo.core.data.{Range => AccRange, _}
+import org.apache.accumulo.core.data._
 import org.apache.accumulo.core.iterators.{IteratorEnvironment, SortedKeyValueIterator}
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.locationtech.geomesa.core
 import org.locationtech.geomesa.core.iterators.QuerySizeIterator._
-import org.locationtech.geomesa.feature.{SimpleFeatureDecoder, FeatureEncoding, SimpleFeatureEncoder}
+import org.locationtech.geomesa.feature.{FeatureEncoding, SimpleFeatureEncoder}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 
 /**
@@ -38,6 +37,7 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
   override def init(source: SortedKeyValueIterator[Key, Value], options: util.Map[String, String], env: IteratorEnvironment): Unit = {
     super.init(source, options, env)
     initFeatureType(options)
+    // Need to grab the original SFT in order to properly decode/filter
     val originalSFT = SimpleFeatureTypes.createType("QuerySizeHijackedIteratorSFT",options.get(core.GEOMESA_ITERATORS_SIMPLE_FEATURE_TYPE))
     super[HasFilter].init(originalSFT, options)
     super[HasFeatureDecoder].init(originalSFT, options)
@@ -46,23 +46,23 @@ class QuerySizeIterator extends GeomesaFilteringIterator with HasFeatureDecoder 
     querySizeFeatureEncoder = SimpleFeatureEncoder(querySizeSFT, FeatureEncoding.KRYO)
   }
 
-  // Might need to override seek functionality or findTop
+  // Could rewrite this to automatically scan to the next top, aggregating results as it goes.
   override def setTopConditionally() = {
 
-//    val featureToInspect = featureDecoder.decode(topValue.get())
-//    filter.evaluate(featureToInspect)
     featureBuilder.reset()
-    topKey = new Key(source.getTopKey)  // JNH: Feel free to ask me about this later.
+    topKey = new Key(source.getTopKey)
 
-    featureBuilder.set(SCAN_BYTES_ATTRIBUTE, 5)
-    featureBuilder.set(SCAN_RECORDS_ATTRIBUTE, 10)
+    val curNumBytes: Long = source.getTopValue.get.length // Could this be wrong?
+
+    featureBuilder.set(SCAN_BYTES_ATTRIBUTE, curNumBytes)
+    featureBuilder.set(SCAN_RECORDS_ATTRIBUTE, 1)
 
     var resultBytes: Long = 0
     var resultRecords: Long = 0
 
     if (filter.evaluate(featureDecoder.decode(source.getTopValue.get))) {
-      resultBytes = 3
-      resultRecords = 2
+      resultBytes = curNumBytes
+      resultRecords = 1
     }
     featureBuilder.set(RESULT_BYTES_ATTRIBUTE, resultBytes)
     featureBuilder.set(RESULT_RECORDS_ATTRIBUTE, resultRecords)
