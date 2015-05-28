@@ -41,7 +41,7 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
 
   sequential
 
-  override def spec = "id:Integer,map:Map[String,Integer],dtg:Date,geom:Point:srid=4326"
+  override def spec = "dtg:Date,geom:Point:srid=4326"
 
   val testData : Map[String,String] = {
     val source = Source.fromInputStream(getClass.getResourceAsStream("/test-lines.tsv"))
@@ -65,17 +65,26 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
 
       val feats = (0 until 150).map { i =>
         val id = i.toString
-        val map = Map("a" -> i, "b" -> i * 2, (if (random.nextBoolean()) "c" else "d") -> random.nextInt(10)).asJava
+        //val map = Map("a" -> i, "b" -> i * 2, (if (random.nextBoolean()) "c" else "d") -> random.nextInt(10)).asJava
         val dtg = new DateTime("2012-01-01T19:00:00", DateTimeZone.UTC).toDate
-        val geom = "POINT(-77 38)"
-        ScalaSimpleFeatureFactory.buildFeature(sft, Array(id, map, dtg, geom), id)
+        val geom = "POINT(" + (-180 + i ) + " " +  (90-i) + ")"
+        ScalaSimpleFeatureFactory.buildFeature(sft, Array(dtg, geom), id)
+      }
+
+      val otherFeats = (-90 until 90).map { i => // Add extra points around the boundry to check proper filtering
+        val id = (i+151).toString
+        val dtg = new DateTime("2012-01-01T19:00:00", DateTimeZone.UTC).toDate
+        val geom = "POINT(-101 " + i + ")"
+        ScalaSimpleFeatureFactory.buildFeature(sft, Array(dtg, geom), id)
       }
 
       clearFeatures()
       addFeatures(feats)
+      addFeatures(otherFeats)
+
 
 //      val q = getQuery("(dtg between '2012-01-01T18:00:00.000Z' AND '2012-01-01T23:00:00.000Z') and BBOX(geom, -80, 33, -70, 40)")
-      val q = getQuery("BBOX(geom, -80, 33, -70, 40)")
+      val q = getQuery("BBOX(geom, -100, -100, 75, 75)")
       val results = fs.getFeatures(q).features().toList
       results must haveLength(1)  // JNH: This still makes sense.
 
@@ -86,12 +95,14 @@ class QuerySizeteratorTest extends Specification with TestWithDataStore {
       val returnSizeBytes = result.getAttribute(QuerySizeIterator.RESULT_BYTES_ATTRIBUTE).asInstanceOf[Long]
       val returnRecords = result.getAttribute(QuerySizeIterator.RESULT_RECORDS_ATTRIBUTE).asInstanceOf[Long]
 
-      val numRecords = 150
+      val expectedNumRecords = 70
+      val currentExpectedSizeInBytes = 30
       println(scanSizeBytes + "\t" + scanRecords + "\t" + returnSizeBytes + "\t" + returnRecords)
-//      scanSizeBytes should be equalTo (5*numRecords)
-      scanRecords should be equalTo (numRecords)
-//      returnSizeBytes should be equalTo (3*numRecords)
-//      returnRecords should be equalTo (2*numRecords)
+
+      scanRecords should be greaterThan expectedNumRecords
+      returnSizeBytes should be greaterThan (currentExpectedSizeInBytes-1)*expectedNumRecords
+      returnSizeBytes should be lessThan (currentExpectedSizeInBytes+1)*expectedNumRecords // Give an expanded range on size
+      returnRecords should be equalTo expectedNumRecords
     }
 
 //    "correctly filter dates" in {
