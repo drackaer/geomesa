@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.process.query
 
@@ -23,6 +15,7 @@ import org.geotools.feature.DefaultFeatureCollection
 import org.geotools.filter.text.cql2.CQL
 import org.joda.time.{DateTime, DateTimeZone}
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.accumulo.TestWithDataStore
 import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloFeatureStore}
 import org.locationtech.geomesa.accumulo.index.Constants
 import org.locationtech.geomesa.features.avro.AvroSimpleFeatureFactory
@@ -34,51 +27,24 @@ import org.specs2.runner.JUnitRunner
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
-class QueryProcessTest extends Specification {
+class QueryProcessTest extends Specification with TestWithDataStore {
 
   sequential
 
-  val dtgField = org.locationtech.geomesa.accumulo.process.tube.DEFAULT_DTG_FIELD
-  val geotimeAttributes = s"*geom:Geometry:srid=4326,$dtgField:Date"
+  val dtg = org.locationtech.geomesa.accumulo.process.tube.DEFAULT_DTG_FIELD
+  override val spec = s"type:String,*geom:Geometry:srid=4326,$dtg:Date"
 
-  def createStore: AccumuloDataStore =
-  // the specific parameter values should not matter, as we
-  // are requesting a mock data store connection to Accumulo
-    DataStoreFinder.getDataStore(Map(
-      "instanceId"        -> "mycloud",
-      "zookeepers"        -> "zoo1:2181,zoo2:2181,zoo3:2181",
-      "user"              -> "myuser",
-      "password"          -> "mypassword",
-      "auths"             -> "A,B,C",
-      "tableName"         -> "testwrite",
-      "useMock"           -> "true",
-      "featureEncoding"   -> "avro")).asInstanceOf[AccumuloDataStore]
-
-  val sftName = "geomesaQueryTestType"
-  val sft = SimpleFeatureTypes.createType(sftName, s"type:String,$geotimeAttributes")
-  sft.getUserData()(Constants.SF_PROPERTY_START_TIME) = dtgField
-
-  val ds = createStore
-
-  ds.createSchema(sft)
-  val fs = ds.getFeatureSource(sftName).asInstanceOf[AccumuloFeatureStore]
-
-  val featureCollection = new DefaultFeatureCollection(sftName, sft)
-
-  List("a", "b").foreach { name =>
-    List(1, 2, 3, 4).zip(List(45, 46, 47, 48)).foreach { case (i, lat) =>
+  val features = List("a", "b").flatMap { name =>
+    List(1, 2, 3, 4).zip(List(45, 46, 47, 48)).map { case (i, lat) =>
       val sf = AvroSimpleFeatureFactory.buildAvroFeature(sft, List(), name + i.toString)
       sf.setDefaultGeometry(WKTUtils.read(f"POINT($lat%d $lat%d)"))
       sf.setAttribute(org.locationtech.geomesa.accumulo.process.tube.DEFAULT_DTG_FIELD, new DateTime("2011-01-01T00:00:00Z", DateTimeZone.UTC).toDate)
       sf.setAttribute("type", name)
-      sf.getUserData()(Hints.USE_PROVIDED_FID) = java.lang.Boolean.TRUE
-      featureCollection.add(sf)
+      sf
     }
   }
 
-  // write the feature to the store
-  val res = fs.addFeatures(featureCollection)
-
+  addFeatures(features)
 
   "GeomesaQuery" should {
     "return things without a filter" in {
@@ -132,7 +98,7 @@ class QueryProcessTest extends Specification {
       val geomesaQuery = new QueryProcess
       val results = geomesaQuery.execute(features, CQL.toFilter("bbox(geom, 45.0, 45.0, 46.0, 46.0)"))
 
-      var poly = WKTUtils.read("POLYGON((45 45, 46 45, 46 46, 45 46, 45 45))")
+      val poly = WKTUtils.read("POLYGON((45 45, 46 45, 46 46, 45 46, 45 45))")
 
       val f = results.features()
       while (f.hasNext) {

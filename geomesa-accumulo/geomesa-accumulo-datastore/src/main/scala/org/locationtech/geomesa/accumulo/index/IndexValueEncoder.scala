@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
@@ -22,13 +14,11 @@ import java.util.{Date, UUID}
 import com.vividsolutions.jts.geom.Geometry
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.geotools.filter.identity.FeatureIdImpl
-import org.locationtech.geomesa.accumulo
-import org.locationtech.geomesa.accumulo.index
-import org.locationtech.geomesa.features.kryo.{ProjectingKryoFeatureDeserializer, KryoFeatureSerializer}
+import org.locationtech.geomesa.features.kryo.{KryoFeatureSerializer, ProjectingKryoFeatureDeserializer}
 import org.locationtech.geomesa.features.serialization.CacheKeyGenerator
-import org.locationtech.geomesa.features.{SimpleFeatureSerializer, SimpleFeatureDeserializer, ScalaSimpleFeature}
+import org.locationtech.geomesa.features.{ScalaSimpleFeature, SimpleFeatureDeserializer, SimpleFeatureSerializer}
 import org.locationtech.geomesa.utils.cache.SoftThreadLocalCache
-import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes._
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.text.WKBUtils
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
@@ -73,17 +63,17 @@ object IndexValueEncoder {
 
   private val cache = new SoftThreadLocalCache[String, (SimpleFeatureType, Seq[String])]()
 
-  def apply(sft: SimpleFeatureType, version: Int): IndexValueEncoder = apply(sft, None, version)
+  def apply(sft: SimpleFeatureType): IndexValueEncoder = apply(sft, None)
 
-  def apply(sft: SimpleFeatureType, transform: SimpleFeatureType, version: Int): IndexValueEncoder =
-    apply(sft, Some(transform), version)
+  def apply(sft: SimpleFeatureType, transform: SimpleFeatureType): IndexValueEncoder =
+    apply(sft, Some(transform))
 
-  def apply(sft: SimpleFeatureType, transform: Option[SimpleFeatureType], version: Int): IndexValueEncoder = {
+  def apply(sft: SimpleFeatureType, transform: Option[SimpleFeatureType]): IndexValueEncoder = {
     val key = CacheKeyGenerator.cacheKeyForSFT(sft)
     val (indexSft, attributes) = cache.getOrElseUpdate(key, (getIndexSft(sft), getIndexValueFields(sft)))
     val copyFunction = getCopyFunction(sft, indexSft)
 
-    if (version < 4) { // kryo encoding introduced in version 4
+    if (sft.getSchemaVersion < 4) { // kryo encoding introduced in version 4
       OldIndexValueEncoder(sft, transform.getOrElse(indexSft))
     } else {
       val encoder = new KryoFeatureSerializer(indexSft)
@@ -101,8 +91,9 @@ object IndexValueEncoder {
    * @param sft
    * @return
    */
-  protected[index] def getIndexSft(sft: SimpleFeatureType) = {
+  def getIndexSft(sft: SimpleFeatureType) = {
     val builder = new SimpleFeatureTypeBuilder()
+    builder.setNamespaceURI(null: String)
     builder.setName(sft.getTypeName + "--index")
     builder.setAttributes(getIndexValueAttributes(sft))
     builder.setDefaultGeometry(sft.getGeometryDescriptor.getLocalName)
@@ -139,7 +130,7 @@ object IndexValueEncoder {
    */
   protected[index] def getIndexValueAttributes(sft: SimpleFeatureType): Seq[AttributeDescriptor] = {
     val geom = sft.getGeometryDescriptor
-    val dtg = index.getDtgFieldName(sft)
+    val dtg = sft.getDtgField
     val attributes = mutable.Buffer.empty[AttributeDescriptor]
     var i = 0
     while (i < sft.getAttributeCount) {
@@ -253,7 +244,7 @@ class OldIndexValueEncoder(sft: SimpleFeatureType, encodedSft: SimpleFeatureType
   }
 
   val geomField = sft.getGeometryDescriptor.getLocalName
-  val dtgField = index.getDtgFieldName(sft)
+  val dtgField = sft.getDtgField
 
   /**
    * Decodes a byte array into a map of attribute name -> attribute value pairs
@@ -304,15 +295,15 @@ object OldIndexValueEncoder {
   // gets the default schema, which includes ID, geom and date (if available)
   // order is important here, as it needs to match the old IndexEntry encoding
   def getDefaultSchema(sft: SimpleFeatureType): Seq[String] =
-    Seq(ID_FIELD, sft.getGeometryDescriptor.getLocalName) ++ index.getDtgFieldName(sft)
+    Seq(ID_FIELD, sft.getGeometryDescriptor.getLocalName) ++ sft.getDtgField
 
   def getSchema(sft: SimpleFeatureType): Seq[String] = {
+    import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
+
     import scala.collection.JavaConversions._
 
     val defaults = getDefaultSchema(sft)
-    val descriptors =  sft.getAttributeDescriptors
-        .filter(d => Option(d.getUserData.get(OPT_INDEX_VALUE).asInstanceOf[Boolean]).getOrElse(false))
-        .map(_.getLocalName)
+    val descriptors =  sft.getAttributeDescriptors.filter(_.isIndexValue()).map(_.getLocalName)
     if (descriptors.isEmpty) {
       defaults
     } else {

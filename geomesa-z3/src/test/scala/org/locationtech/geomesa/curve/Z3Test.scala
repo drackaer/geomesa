@@ -162,10 +162,47 @@ class Z3Test extends Specification {
     "calculate ranges" >> {
       val min = Z3(2, 2, 0)
       val max = Z3(3, 6, 0)
-      val ranges = Z3.zranges(min, max, 100)
+      val ranges = Z3.zranges(min, max)
       ranges must haveLength(3)
       ranges must containTheSameElementsAs(Seq((Z3(2, 2, 0).z, Z3(3, 3, 0).z),
         (Z3(2, 4, 0).z, Z3(3, 5, 0).z), (Z3(2, 6, 0).z, Z3(3, 6, 0).z)))
+    }
+
+    "return non-empty ranges for a number of cases" >> {
+      val sfc = new Z3SFC
+      val week = sfc.tmax.toLong
+      val day = sfc.tmax.toLong / 7
+      val hour = sfc.tmax.toLong / 168
+
+      val ranges = Seq(
+        (sfc.index(-180, -90, 0), sfc.index(180, 90, week)), // whole world, full week
+        (sfc.index(-180, -90, day), sfc.index(180, 90, day * 2)), // whole world, 1 day
+        (sfc.index(-180, -90, hour * 10), sfc.index(180, 90, hour * 11)), // whole world, 1 hour
+        (sfc.index(-180, -90, hour * 10), sfc.index(180, 90, hour * 64)), // whole world, 54 hours
+        (sfc.index(-180, -90, day * 2), sfc.index(180, 90, week)), // whole world, 5 day
+        (sfc.index(-90, -45, sfc.tmax.toLong / 4), sfc.index(90, 45, 3 * sfc.tmax.toLong / 4)), // half world, half week
+        (sfc.index(35, 65, 0), sfc.index(45, 75, day)), // 10^2 degrees, 1 day
+        (sfc.index(35, 55, 0), sfc.index(45, 65, week)), // 10^2 degrees, full week
+        (sfc.index(35, 55, day), sfc.index(45, 75, day * 2)), // 10x20 degrees, 1 day
+        (sfc.index(35, 55, day + hour * 6), sfc.index(45, 75, day * 2)), // 10x20 degrees, 18 hours
+        (sfc.index(35, 65, day + hour), sfc.index(45, 75, day * 6)), // 10^2 degrees, 5 days 23 hours
+        (sfc.index(35, 65, day), sfc.index(37, 68, day + hour * 6)), // 2x3 degrees, 6 hours
+        (sfc.index(35, 65, day), sfc.index(40, 70, day + hour * 6)), // 5^2 degrees, 6 hours
+        (sfc.index(39.999, 60.999, day + 3000), sfc.index(40.001, 61.001, day + 3120)), // small bounds
+        (sfc.index(51.0, 51.0, 6000), sfc.index(51.1, 51.1, 6100)), // small bounds
+        (sfc.index(51.0, 51.0, 30000), sfc.index(51.001, 51.001, 30100)), // small bounds
+        (Z3(sfc.index(51.0, 51.0, 30000).z - 1), Z3(sfc.index(51.0, 51.0, 30000).z + 1)) // 62 bits in common
+      )
+
+      def print(l: Z3, u: Z3, size: Int): Unit =
+        println(s"${round(sfc.invert(l))} ${round(sfc.invert(u))}\t$size")
+      def round(z: (Double, Double, Long)): (Double, Double, Long) =
+        (math.round(z._1 * 1000.0) / 1000.0, math.round(z._2 * 1000.0) / 1000.0, z._3)
+
+      forall(ranges) { r =>
+        val ret = Z3.zranges(r._1, r._2)
+        ret.length must beGreaterThan(0)
+      }
     }
   }
 }

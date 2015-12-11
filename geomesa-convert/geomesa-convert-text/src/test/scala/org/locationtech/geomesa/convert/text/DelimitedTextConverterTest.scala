@@ -1,27 +1,23 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.convert.text
 
+import java.io.{InputStreamReader, ByteArrayInputStream}
 import java.nio.charset.StandardCharsets
 
 import com.google.common.io.Resources
 import com.typesafe.config.ConfigFactory
+import com.vividsolutions.jts.geom.{Coordinate, GeometryFactory}
+import org.apache.commons.csv.CSVFormat
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.convert.SimpleFeatureConverters
+import org.locationtech.geomesa.convert.Transformers.DefaultCounter
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
@@ -217,7 +213,9 @@ class DelimitedTextConverterTest extends Specification {
           |   type         = "delimited-text",
           |   format       = "DEFAULT",
           |   id-field     = "md5(string2bytes($0))",
-          |   pipe-size    = 16 // 16 bytes
+          |   options = {
+          |       pipe-size    = 16 // 16 bytes
+          |   },
           |   fields = [
           |     { name = "oneup",  transform = "$1" },
           |     { name = "phrase", transform = "concat($1, $2)" },
@@ -230,6 +228,7 @@ class DelimitedTextConverterTest extends Specification {
         """.stripMargin)
 
       val converter = SimpleFeatureConverters.build[String](sft, sizeConf)
+      converter.asInstanceOf[DelimitedTextConverter]
       val data =
         """
           |1,hello,45.0,45.0
@@ -242,6 +241,147 @@ class DelimitedTextConverterTest extends Specification {
       converter.close()
 
       res.size must be greaterThan 0
+    }
+
+    "handle wkt" >> {
+      val wktData =
+        """
+          |1,hello,Point(46.0 45.0)
+          |2,world,Point(90.0 90.0)
+        """.stripMargin
+
+      val wktConf = ConfigFactory.parseString(
+        """
+          | converter = {
+          |   type         = "delimited-text",
+          |   format       = "DEFAULT",
+          |   id-field     = "md5(string2bytes($0))",
+          |   fields = [
+          |     { name = "oneup",    transform = "$1" },
+          |     { name = "phrase",   transform = "concat($1, $2)" },
+          |     { name = "geom",     transform = "geometry($3)" }
+          |   ]
+          | }
+        """.stripMargin)
+
+      val wktSft = SimpleFeatureTypes.createType(ConfigFactory.load("sft_testsft.conf"))
+      val converter = SimpleFeatureConverters.build[String](wktSft, wktConf)
+
+      val res = converter.processInput(wktData.split("\n").toIterator.filterNot( s => "^\\s*$".r.findFirstIn(s).size > 0)).toList
+      res.length mustEqual 2
+      converter.close()
+
+      val geoFac = new GeometryFactory()
+      res(0).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(46, 45))
+      res(1).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(90, 90))
+    }
+
+    "skip header lines" >> {
+       val conf =
+        """
+          | converter = {
+          |   type         = "delimited-text",
+          |   format       = "DEFAULT",
+          |   id-field     = "md5(string2bytes($0))",
+          |   options = {
+          |       skip-lines = SKIP
+          |   },
+          |   fields = [
+          |     { name = "oneup",    transform = "$1" },
+          |     { name = "phrase",   transform = "concat($1, $2)" },
+          |     { name = "geom",     transform = "geometry($3)" }
+          |   ]
+          | }
+        """.stripMargin
+      val wktSft = SimpleFeatureTypes.createType(ConfigFactory.load("sft_testsft.conf"))
+
+      "csv parser failblog or misunderstanding test" >> {
+        val format = CSVFormat.DEFAULT.withSkipHeaderRecord(true).withIgnoreEmptyLines(true)
+        val trueData =
+          """
+            |num,msg,geom
+            |1,hello,Point(46.0 45.0)
+            |2,world,Point(90.0 90.0)
+          """.stripMargin
+
+        import scala.collection.JavaConversions._
+        val sz = format.parse(new InputStreamReader(new ByteArrayInputStream(trueData.getBytes))).iterator().toList.size
+
+        // prove that skipHeader and empty lines doesn't work (at least as I think) and that we are safe to
+        // consume the header record and empty lines as part of our config
+        sz mustEqual 4
+      }
+      "with single line header" >> {
+        val trueConf = ConfigFactory.parseString(conf.replaceAllLiterally("SKIP", "1"))
+        val trueData =
+          """
+            |num,msg,geom
+            |1,hello,Point(46.0 45.0)
+            |2,world,Point(90.0 90.0)
+          """.stripMargin
+        val converter = SimpleFeatureConverters.build[String](wktSft, trueConf)
+
+        val counter = new DefaultCounter
+        val res = converter.processInput(trueData.split("\n").toIterator.filterNot( s => "^\\s*$".r.findFirstIn(s).size > 0), counter = counter).toList
+        res.length mustEqual 2
+        converter.close()
+
+        counter.getLineCount mustEqual 3
+        counter.getSuccess mustEqual 2
+        counter.getFailure mustEqual 0
+
+        val geoFac = new GeometryFactory()
+        res(0).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(46, 45))
+        res(1).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(90, 90))
+      }
+
+      "with header set to 0" >> {
+        val falseConf = ConfigFactory.parseString(conf.replaceAllLiterally("SKIP", "0"))
+        val falseData =
+          """
+            |1,hello,Point(46.0 45.0)
+            |2,world,Point(90.0 90.0)
+          """.stripMargin
+        val converter = SimpleFeatureConverters.build[String](wktSft, falseConf)
+
+        val counter = new DefaultCounter
+        val res = converter.processInput(falseData.split("\n").toIterator.filterNot( s => "^\\s*$".r.findFirstIn(s).size > 0), counter = counter).toList
+        res.length mustEqual 2
+        converter.close()
+
+        counter.getLineCount mustEqual 2
+        counter.getSuccess mustEqual 2
+        counter.getFailure mustEqual 0
+
+        val geoFac = new GeometryFactory()
+        res(0).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(46, 45))
+        res(1).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(90, 90))
+      }
+      "with header set to 3" >> {
+        val falseConf = ConfigFactory.parseString(conf.replaceAllLiterally("SKIP", "3"))
+        val falseData =
+          """
+            |num,msg,geom
+            |some other garbage
+            |that somebody placed in my file maybe as a comment
+            |1,hello,Point(46.0 45.0)
+            |2,world,Point(90.0 90.0)
+          """.stripMargin
+        val converter = SimpleFeatureConverters.build[String](wktSft, falseConf)
+
+        val counter = new DefaultCounter
+        val res = converter.processInput(falseData.split("\n").toIterator.filterNot( s => "^\\s*$".r.findFirstIn(s).size > 0), counter = counter).toList
+        res.length mustEqual 2
+        converter.close()
+
+        counter.getLineCount mustEqual 5
+        counter.getSuccess mustEqual 2
+        counter.getFailure mustEqual 0
+
+        val geoFac = new GeometryFactory()
+        res(0).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(46, 45))
+        res(1).getDefaultGeometry mustEqual geoFac.createPoint(new Coordinate(90, 90))
+      }
     }
   }
 }

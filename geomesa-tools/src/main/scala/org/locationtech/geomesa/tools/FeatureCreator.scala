@@ -1,78 +1,66 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.tools
 
 import com.typesafe.scalalogging.slf4j.Logging
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
 import org.locationtech.geomesa.accumulo.index._
-import org.locationtech.geomesa.tools.commands.CreateFeatureParams
+import org.locationtech.geomesa.tools.commands.{CreateFeatureParams, GeoMesaParams}
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.opengis.feature.simple.SimpleFeatureType
 
 object FeatureCreator extends Logging {
 
-  def createFeature(params: CreateFeatureParams): Unit = {
-    val ds = new DataStoreHelper(params).getOrCreateDs
-    createFeature(ds, params)
-  }
-
-  def createFeature(ds: AccumuloDataStore, params: CreateFeatureParams): Unit =
+  def createFeature(params: CreateFeatureParams, convert: String = null): Unit = {
+    val ds = new DataStoreHelper(params).getOrCreateDs()
     createFeature(
       ds,
-      params.spec,
+      SftArgParser.getSft(params.spec, params.featureName, convert),
       params.featureName,
       Option(params.dtgField),
       Option(params.useSharedTables),
-      params.catalog,
-      Option(params.numShards))
+      params.catalog)
+  }
+
+
+  def createFeature(params: GeoMesaParams, sft: SimpleFeatureType): Unit =
+    new DataStoreHelper(params).getOrCreateDs().createSchema(sft)
 
   def createFeature(ds: AccumuloDataStore,
-                    sftspec: String,
+                    sft: SimpleFeatureType,
                     featureName: String,
                     dtField: Option[String],
                     sharedTable: Option[Boolean],
-                    catalog: String,
-                    maxShards: Option[Integer] = None): Unit = {
+                    catalog: String): Unit = {
+    val sftString = SimpleFeatureTypes.encodeType(sft)
     logger.info(s"Creating '$featureName' on catalog table '$catalog' with spec " +
-      s"'$sftspec'. Just a few moments...")
+      s"'$sftString'. Just a few moments...")
 
     if (ds.getSchema(featureName) == null) {
 
       logger.info("Creating GeoMesa tables...")
-
-      val sft = SimpleFeatureTypes.createType(featureName, sftspec)
       if (dtField.orNull != null) {
         // Todo: fix logic here, it is a bit strange
-        sft.getUserData.put(SF_PROPERTY_START_TIME, dtField.getOrElse(Constants.SF_PROPERTY_START_TIME))
+        sft.setDtgField(dtField.getOrElse(Constants.SF_PROPERTY_START_TIME))
       }
 
-      sharedTable.foreach { org.locationtech.geomesa.accumulo.index.setTableSharing(sft, _) }
+      sharedTable.foreach(sft.setTableSharing)
 
-      if (maxShards.isDefined) {
-        ds.createSchema(sft, maxShards.get)
-      } else {
-        ds.createSchema(sft)
-      }
+      ds.createSchema(sft)
 
       if (ds.getSchema(featureName) != null) {
         logger.info(s"Feature '$featureName' on catalog table '$catalog' with spec " +
-          s"'$sftspec' successfully created.")
+          s"'$sftString' successfully created.")
         println(s"Created feature $featureName")
       } else {
         logger.error(s"There was an error creating feature '$featureName' on catalog table " +
-          s"'$catalog' with spec '$sftspec'. Please check that all arguments are correct " +
+          s"'$catalog' with spec '$sftString'. Please check that all arguments are correct " +
           "in the previous command.")
       }
     } else {

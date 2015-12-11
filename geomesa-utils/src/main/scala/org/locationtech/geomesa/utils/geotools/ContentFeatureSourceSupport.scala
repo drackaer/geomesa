@@ -1,24 +1,14 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License. 
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.utils.geotools
 
+import org.geotools.data.Query
 import org.geotools.data.store.{ContentFeatureSource, ContentFeatureStore}
-import org.geotools.data.{FeatureReader, Query}
-import org.geotools.feature.simple.SimpleFeatureTypeBuilder
-import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 /** Parent for any trait adding support to a [[ContentFeatureSource]] such as 'retype', 'sort', 'offset',
   * or 'limit'.
@@ -32,8 +22,6 @@ import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
   * their ``addSupport`` implementation so that support can be chained and applied left to right.
   */
 trait ContentFeatureSourceSupport {
-
-  type FR = FeatureReader[SimpleFeatureType, SimpleFeature]
 
   /** Adds support to given ``reader``, based on the ``query`` and returns a wrapped [[FR]].  Sub-traits
     * must override.
@@ -54,7 +42,7 @@ trait ContentFeatureSourceReTypingSupport extends ContentFeatureSourceSupport {
     
     // logic copied from ContentFeatureSource.getReader() but uses TypeUpdatingFeatureReader instead
     if (query.getPropertyNames != Query.ALL_NAMES) {
-      val target: SimpleFeatureType = SimpleFeatureTypeBuilder.retype(getSchema, query.getPropertyNames)
+      val target = FeatureUtils.retype(getSchema, query.getPropertyNames)
       if (!(target == reader.getFeatureType)) {
         result = new TypeUpdatingFeatureReader(result, target)
       }

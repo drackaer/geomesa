@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.iterators
 
@@ -22,8 +14,8 @@ import org.apache.accumulo.core.client.security.tokens.PasswordToken
 import org.apache.accumulo.core.client.{Connector, IteratorSetting}
 import org.apache.accumulo.core.iterators.user.RegExFilter
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.CURRENT_SCHEMA_VERSION
 import org.locationtech.geomesa.accumulo.GEOMESA_ITERATORS_VERSION
-import org.locationtech.geomesa.accumulo.data.INTERNAL_GEOMESA_VERSION
 import org.locationtech.geomesa.accumulo.iterators.TestData._
 import org.locationtech.geomesa.accumulo.util.GeoMesaBatchWriterConfig
 import org.specs2.mutable.Specification
@@ -65,7 +57,7 @@ class SpatioTemporalIntersectingIteratorTest extends Specification with Logging 
       val c = setupMockAccumuloTable(TestData.shortListOfPoints, table)
       val s = c.createScanner(table, TEST_AUTHORIZATIONS)
       val cfg = new IteratorSetting(1000, "consistency-iter", classOf[ConsistencyCheckingIterator])
-      cfg.addOption(GEOMESA_ITERATORS_VERSION, INTERNAL_GEOMESA_VERSION.toString)
+      cfg.addOption(GEOMESA_ITERATORS_VERSION, CURRENT_SCHEMA_VERSION.toString)
       s.addScanIterator(cfg)
 
       // validate the total number of query-hits
@@ -88,7 +80,7 @@ class SpatioTemporalIntersectingIteratorTest extends Specification with Logging 
 
       val s = c.createScanner(table, TEST_AUTHORIZATIONS)
       val cfg = new IteratorSetting(1000, "consistency-iter", classOf[ConsistencyCheckingIterator])
-      cfg.addOption(GEOMESA_ITERATORS_VERSION, INTERNAL_GEOMESA_VERSION.toString)
+      cfg.addOption(GEOMESA_ITERATORS_VERSION, CURRENT_SCHEMA_VERSION.toString)
       s.addScanIterator(cfg)
 
       // validate the total number of query-hits

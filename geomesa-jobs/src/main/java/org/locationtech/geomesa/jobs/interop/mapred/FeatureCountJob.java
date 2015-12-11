@@ -1,38 +1,24 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+ * Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the Apache License, Version 2.0 which
+ * accompanies this distribution and is available at
+ * http://www.opensource.org/licenses/apache2.0.php.
+ *************************************************************************/
 
 package org.locationtech.geomesa.jobs.interop.mapred;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapred.Counters.Counter;
-import org.apache.hadoop.mapred.FileOutputFormat;
-import org.apache.hadoop.mapred.JobClient;
-import org.apache.hadoop.mapred.JobConf;
-import org.apache.hadoop.mapred.MapReduceBase;
-import org.apache.hadoop.mapred.Mapper;
-import org.apache.hadoop.mapred.OutputCollector;
-import org.apache.hadoop.mapred.Reporter;
-import org.apache.hadoop.mapred.TextOutputFormat;
+import org.apache.hadoop.mapred.*;
 import org.geotools.data.Query;
 import org.geotools.filter.text.ecql.ECQL;
 import org.opengis.feature.simple.SimpleFeature;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Sample job showing how to read features using GeoMesaInputFormat.
@@ -45,7 +31,7 @@ import java.util.HashMap;
  */
 public class FeatureCountJob {
 
-    public static class Map extends MapReduceBase implements Mapper<Text, SimpleFeature, Text, Text> {
+    public static class MyMapper extends MapReduceBase implements Mapper<Text, SimpleFeature, Text, Text> {
 
         static enum CountersEnum { FEATURES }
 
@@ -67,7 +53,7 @@ public class FeatureCountJob {
         conf.setOutputKeyClass(Text.class);
         conf.setOutputValueClass(Text.class);
 
-        conf.setMapperClass(Map.class);
+        conf.setMapperClass(MyMapper.class);
         conf.setNumReduceTasks(0);
 
         conf.setInputFormat(GeoMesaInputFormat.class);
@@ -75,7 +61,7 @@ public class FeatureCountJob {
 
         FileOutputFormat.setOutputPath(conf, new Path("/tmp/myjob"));
 
-        java.util.Map<String, String> params = new HashMap<String, String>();
+        Map<String, String> params = new HashMap<>();
         params.put("instanceId", "myinstance");
         params.put("zookeepers", "zoo1,zoo2,zoo3");
         params.put("user", "myuser");

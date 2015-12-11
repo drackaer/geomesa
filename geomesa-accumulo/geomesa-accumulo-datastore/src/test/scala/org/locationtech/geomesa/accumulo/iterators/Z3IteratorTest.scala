@@ -1,3 +1,10 @@
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.accumulo.iterators
 
 import java.util
@@ -23,8 +30,8 @@ class Z3IteratorTest extends Specification {
     val (ux, uy, ut) = (-75.0, 40, 800)
 
     val Z3Curve = new Z3SFC
-    val zmin = Z3Curve.index(lx, ly, lt)
-    val zmax = Z3Curve.index(ux, uy, ut)
+    val (xmin, ymin, tmin) = Z3Curve.index(lx, ly, lt).decode
+    val (xmax, ymax, tmax) = Z3Curve.index(ux, uy, ut).decode
 
     val srcIter = new SortedKeyValueIterator[Key, Value] {
       var key: Key = null
@@ -40,7 +47,6 @@ class Z3IteratorTest extends Specification {
                         map: util.Map[String, String],
                         iteratorEnvironment: IteratorEnvironment): Unit = {}
       override def seek(range: Range, collection: util.Collection[ByteSequence], b: Boolean): Unit = {
-        println("seek called")
         key = null
         staged = null
       }
@@ -48,7 +54,7 @@ class Z3IteratorTest extends Specification {
     }
 
     val iter = new Z3Iterator
-    iter.init(srcIter, Map("zmin" -> s"${zmin.z}", "zmax" -> s"${zmax.z}"), null)
+    iter.init(srcIter, Map(Z3Iterator.zKey -> s"$xmin:$xmax:$ymin:$ymax:$tmin:$tmax:0:0"), null)
 
     "keep in bounds values" >> {
       val test1 = Z3Curve.index(-76.0, 38.5, 500)

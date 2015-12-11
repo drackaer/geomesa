@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.filter
 
@@ -20,132 +12,124 @@ import java.util.Date
 
 import com.typesafe.scalalogging.slf4j.Logging
 import com.vividsolutions.jts.geom.Coordinate
-import org.geotools.data.simple.{SimpleFeatureSource, SimpleFeatureStore}
-import org.geotools.data.{DataStoreFinder, Query}
+import org.geotools.data.Query
 import org.geotools.factory.{CommonFactoryFinder, Hints}
-import org.geotools.feature.DefaultFeatureCollection
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.geotools.filter.text.ecql.ECQL
 import org.geotools.geometry.jts.JTSFactoryFinder
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreTest, AccumuloFeatureStore}
+import org.locationtech.geomesa.accumulo.TestWithDataStore
 import org.locationtech.geomesa.accumulo.filter.TestFilters._
-import org.locationtech.geomesa.accumulo.index.SF_PROPERTY_START_TIME
 import org.locationtech.geomesa.accumulo.iterators.TestData
-import org.locationtech.geomesa.accumulo.iterators.TestData._
+import org.locationtech.geomesa.features.ScalaSimpleFeature
 import org.locationtech.geomesa.features.avro.AvroSimpleFeatureFactory
+import org.locationtech.geomesa.utils.geotools.Conversions._
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.SimpleFeature
 import org.opengis.filter._
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.collection.JavaConversions._
-
 
 @RunWith(classOf[JUnitRunner])
-class AllPredicateTest extends Specification with FilterTester {
-  val filters = goodSpatialPredicates
-  runTest
+class FilterTester extends Specification with TestWithDataStore with Logging {
+
+  override val spec = SimpleFeatureTypes.encodeType(TestData.featureType)
+
+  val mediumDataFeatures: Seq[SimpleFeature] =
+    TestData.mediumData.map(TestData.createSF).map(f => new ScalaSimpleFeature(f.getID, sft, f.getAttributes.toArray))
+
+  addFeatures(mediumDataFeatures)
+
+  "Filters" should {
+    "filter correctly for all predicates" >> {
+      runTest(goodSpatialPredicates)
+    }
+
+    "filter correctly for AND geom predicates" >> {
+      runTest(andedSpatialPredicates)
+    }
+
+    "filter correctly for OR geom predicates" >> {
+      runTest(oredSpatialPredicates)
+    }
+
+    "filter correctly for OR geom predicates with projections" >> {
+      runTest(oredSpatialPredicates, Array("geom"))
+    }
+
+    "filter correctly for basic temporal predicates" >> {
+      runTest(temporalPredicates)
+    }
+
+    "filter correctly for basic spatiotemporal predicates" >> {
+      runTest(spatioTemporalPredicates)
+    }
+
+    "filter correctly for basic spariotemporal predicates with namespaces" >> {
+      runTest(spatioTemporalPredicatesWithNS)
+    }
+
+    "filter correctly for attribute predicates" >> {
+      runTest(attributePredicates)
+    }
+
+    "filter correctly for attribute and geometric predicates" >> {
+      runTest(attributeAndGeometricPredicates)
+    }
+
+    "filter correctly for attribute and geometric predicates with namespaces" >> {
+      runTest(attributeAndGeometricPredicatesWithNS)
+    }
+
+    "filter correctly for DWITHIN predicates" >> {
+      runTest(dwithinPointPredicates)
+    }
+
+    "filter correctly for ID predicates" >> {
+      runTest(idPredicates)
+    }
+  }
+
+  def compareFilter(filter: Filter, projection: Array[String]) = {
+    val filterCount = mediumDataFeatures.count(filter.evaluate)
+    val query = new Query(sftName, filter)
+    Option(projection).foreach(query.setPropertyNames)
+    val queryCount = fs.getFeatures(query).size
+    logger.debug(s"\nFilter: ${ECQL.toCQL(filter)}\nFullData size: ${mediumDataFeatures.size}: " +
+        s"filter hits: $filterCount query hits: $queryCount")
+    queryCount mustEqual filterCount
+  }
+
+  def runTest(filters: Seq[String], projection: Array[String] = null) =
+    forall(filters.map(ECQL.toFilter))(compareFilter(_, projection))
 }
 
 @RunWith(classOf[JUnitRunner])
-class AndGeomsPredicateTest extends FilterTester {
-  val filters = andedSpatialPredicates
-  runTest
-}
+class IdQueryTest extends Specification with TestWithDataStore {
 
-@RunWith(classOf[JUnitRunner])
-class OrGeomsPredicateTest extends FilterTester {
-  val filters = oredSpatialPredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class OrGeomsPredicateWithProjectionTest extends FilterTester {
-  val filters = oredSpatialPredicates
-  runTest
-
-  override def modifyQuery(query: Query): Unit = query.setPropertyNames(Array("geom"))
-}
-
-@RunWith(classOf[JUnitRunner])
-class BasicTemporalPredicateTest extends FilterTester {
-  val filters = temporalPredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class BasicSpatioTemporalPredicateTest extends FilterTester {
-  val filters = spatioTemporalPredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class AttributePredicateTest extends FilterTester {
-  val filters = attributePredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class AttributeGeoPredicateTest extends FilterTester {
-  val filters = attributeAndGeometricPredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class DWithinPredicateTest extends FilterTester {   
-  val filters = dwithinPointPredicates
-}
-
-@RunWith(classOf[JUnitRunner])
-class IdPredicateTest extends FilterTester {
-  val filters = idPredicates
-  runTest
-}
-
-@RunWith(classOf[JUnitRunner])
-class IdQueryTest extends Specification {
+  override val spec = "age:Int:index=true,name:String:index=true,dtg:Date,*geom:Point:srid=4326"
 
   val ff = CommonFactoryFinder.getFilterFactory2
-  val ds = {
-    DataStoreFinder.getDataStore(Map(
-      "instanceId"        -> "mycloud",
-      "zookeepers"        -> "zoo1:2181,zoo2:2181,zoo3:2181",
-      "user"              -> "myuser",
-      "password"          -> "mypassword",
-      "auths"             -> "A,B,C",
-      "tableName"         -> "idquerytest",
-      "useMock"           -> "true",
-      "featureEncoding"   -> "avro")).asInstanceOf[AccumuloDataStore]
-  }
   val geomBuilder = JTSFactoryFinder.getGeometryFactory
-  val sft = SimpleFeatureTypes.createType("idquerysft", "age:Int:index=true,name:String:index=true,dtg:Date,*geom:Point:srid=4326")
-  sft.getUserData.put(SF_PROPERTY_START_TIME,"dtg")
-  ds.createSchema(sft)
   val builder = new SimpleFeatureBuilder(sft, new AvroSimpleFeatureFactory)
   val data = List(
     ("1", Array(10, "johndoe", new Date), geomBuilder.createPoint(new Coordinate(10, 10))),
     ("2", Array(20, "janedoe", new Date), geomBuilder.createPoint(new Coordinate(20, 20))),
     ("3", Array(30, "johnrdoe", new Date), geomBuilder.createPoint(new Coordinate(20, 20)))
   )
-  val featureCollection = new DefaultFeatureCollection()
-  val features = data.foreach { case (id, attrs, geom) =>
+  val features = data.map { case (id, attrs, geom) =>
     builder.reset()
     builder.addAll(attrs.asInstanceOf[Array[AnyRef]])
     val f = builder.buildFeature(id)
     f.setDefaultGeometry(geom)
     f.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
-    featureCollection.add(f)
+    f
   }
-  val fs = ds.getFeatureSource("idquerysft").asInstanceOf[SimpleFeatureStore]
-  fs.addFeatures(featureCollection)
-  fs.flush()
 
-  import org.locationtech.geomesa.utils.geotools.Conversions._
+  addFeatures(features)
 
   "Id queries" should {
-
     "use record table to return a result" >> {
       val idQ = ff.id(ff.featureId("2"))
       val res = fs.getFeatures(idQ).features().toList
@@ -166,67 +150,7 @@ class IdQueryTest extends Specification {
       val idQ =  ff.and(idQ1, idQ2)
       val qRes = fs.getFeatures(idQ)
       val res= qRes.features().toList
-
       res.length mustEqual 0
     }
   }
-}
-
-object FilterTester extends Logging {
-  val mediumDataFeatures: Seq[SimpleFeature] = mediumData.map(createSF)
-  val sft = mediumDataFeatures.head.getFeatureType
-
-  val ds = {
-    DataStoreFinder.getDataStore(Map(
-      "instanceId"        -> "mycloud",
-      "zookeepers"        -> "zoo1:2181,zoo2:2181,zoo3:2181",
-      "user"              -> "myuser",
-      "password"          -> "mypassword",
-      "auths"             -> "A,B,C",
-      "tableName"         -> "filtertester",
-      "useMock"           -> "true",
-      "featureEncoding"   -> "avro")).asInstanceOf[AccumuloDataStore]
-  }
-
-  def buildFeatureSource(): SimpleFeatureSource = {
-    ds.createSchema(sft)
-    val fs: AccumuloFeatureStore = ds.getFeatureSource(sft.getTypeName).asInstanceOf[AccumuloFeatureStore]
-    val coll = new DefaultFeatureCollection(sft.getTypeName)
-    coll.addAll(mediumDataFeatures)
-
-    logger.debug("Adding SimpleFeatures to feature store.")
-    fs.addFeatures(coll)
-    logger.debug("Done adding SimpleFeaturest to feature store.")
-
-    fs
-  }
-  val fs1 = buildFeatureSource()
-  val afr = ds.getFeatureReader(sft.getTypeName)
-}
-
-import org.locationtech.geomesa.accumulo.filter.FilterTester._
-
-trait FilterTester extends Specification with Logging {
-  val fs = fs1
-
-  def filters: Seq[String]
-
-  def modifyQuery(query: Query): Unit = {}
-
-  def compareFilter(filter: Filter) = {
-    logger.debug(s"Filter: ${ECQL.toCQL(filter)}")
-    s"The filter $filter" should {
-      "return the same number of results from filtering and querying" in {
-        val filterCount = mediumDataFeatures.count(filter.evaluate)
-        val queryCount = fs.getFeatures(filter).size
-        logger.debug(s"\nFilter: ${ECQL.toCQL(filter)}\nFullData size: ${mediumDataFeatures.size}: " +
-            s"filter hits: $filterCount query hits: $queryCount")
-        queryCount mustEqual filterCount
-      }
-    }
-  }
-
-  import org.locationtech.geomesa.accumulo.filter.FilterUtils._
-  def runTest = filters.map { s => compareFilter(s)}
-
 }

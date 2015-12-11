@@ -1,25 +1,18 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.accumulo.filter
 
-import org.locationtech.geomesa.accumulo.filter.FilterUtils._
-import org.opengis.filter._
+import org.locationtech.geomesa.filter
+import org.opengis.filter.Filter
 
 object TestFilters {
+
+  import filter._
 
   val baseFilters: Seq[Filter] =
     Seq(
@@ -46,7 +39,7 @@ object TestFilters {
       "((INTERSECTS(geom, POLYGON ((44 23, 46 23, 46 25, 44 25, 44 23))) AND INTERSECTS(geom, POLYGON ((44 23, 46 23, 46 25, 44 25, 44 23)))) AND attr17 = val17)",
       "(INTERSECTS(geom, POLYGON ((44 23, 46 23, 46 25, 44 25, 44 23))) AND INTERSECTS(geom, POLYGON ((44 23, 46 23, 46 25, 44 25, 44 23))) AND attr17 = val17)",
       "(attr15 = val15 AND ((INTERSECTS(geom, POLYGON ((44 23, 46 23, 46 25, 44 25, 44 23))) AND attr37 = val37) AND attr19 = val19))"
-  )
+    )
 
   val oneLevelOrFilters: Seq[Filter] =
     Seq(
@@ -172,6 +165,16 @@ object TestFilters {
     "attr2 ILIKE '2nd1%' AND WITHIN(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))"
   )
 
+  val attributeAndGeometricPredicatesWithNS = Seq(
+    // For mediumData, this next filter will hit and the one after will not.
+    "attr2 = '2nd100001' AND INTERSECTS(ns:geom, POLYGON ((45 20, 48 20, 48 27, 45 27, 45 20)))",
+    "attr2 = '2nd100001' AND INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
+    "attr2 ILIKE '2nd1%' AND CROSSES(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
+    "attr2 ILIKE '2nd1%' AND INTERSECTS(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
+    "attr2 ILIKE '2nd1%' AND OVERLAPS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
+    "attr2 ILIKE '2nd1%' AND WITHIN(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))"
+  )
+
   val temporalPredicates = Seq(
     "(not dtg after 2010-08-08T23:59:59Z) and (not dtg_end_time before 2010-08-08T00:00:00Z)",
     "(dtg between '2010-08-08T00:00:00.000Z' AND '2010-08-08T23:59:59.000Z')",
@@ -180,6 +183,12 @@ object TestFilters {
 
   val spatioTemporalPredicates = Seq(
     "INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z"
+  )
+
+  val spatioTemporalPredicatesWithNS = Seq(
+    "INTERSECTS(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z",
+    "INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND ns:dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z",
+    "INTERSECTS(ns:geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND ns:dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z"
   )
 
   val dwithinPolys = for(i <- 1 until 50000 by 10000) yield {s"DWITHIN(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)), $i.0, meters)"}
@@ -203,12 +212,19 @@ object TestFilters {
     "attr1 = 'dummy' AND INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28))) AND attr2 = 'dummy'",
     "attr1 = 'dummy' AND INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
     "INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
-    "attr1 = 'val56'",
-    "attr1 ILIKE '2nd1%'",
-    "attr1 ILIKE '2nd1%'",
     // The next query is *not* 'like-eligible'.  As such, we do *not* want to use it with the current attribute inde.
     "attr2 ILIKE '%1' AND INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
     "dtgNonIdx DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND attr2 = 'val56'"
+  )
+
+  val stIdxStrategyPredicatesWithNS = Seq(
+    "INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28))) AND ns:attr2 = 'val56'",
+    "ns:attr1 = 'dummy' AND INTERSECTS(geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28))) AND attr2 = 'dummy'",
+    "attr1 = 'dummy' AND INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
+    "INTERSECTS(ns:geom, POLYGON ((41 28, 42 28, 42 29, 41 29, 41 28)))",
+    // The next query is *not* 'like-eligible'.  As such, we do *not* want to use it with the current attribute inde.
+    "ns:attr2 ILIKE '%1' AND INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23)))",
+    "ns:dtgNonIdx DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))) AND attr2 = 'val56'"
   )
 
   /**
@@ -222,13 +238,19 @@ object TestFilters {
     "attr1 = 'val56' AND attr2 = 'val56'",
     "attr2 = 'val56' AND attr1 = 'val3'",
     "attr1 = 'val56' AND attr1 = 'val57' AND attr2 = 'val56'",
+    "high = 'val56' AND dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z",
+    "dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND high = 'val56'",
+    "attr2 = 'val56' AND NOT (INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))))"
+  )
+
+  val z3Predicates = Seq(
     "attr2 = 'val56' AND dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z",
-    "dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND attr2 = 'val56'",
-    "attr2 = 'val56' AND NOT (INTERSECTS(geom, POLYGON ((45 23, 48 23, 48 27, 45 27, 45 23))))",
     "attr2 = 'val56' AND dtg BETWEEN '2010-07-01T00:00:00.000Z' AND '2010-07-31T00:00:00.000Z'",
+    "dtg DURING 2010-08-08T00:00:00.000Z/2010-08-08T23:59:59.000Z AND attr2 = 'val56'",
     "dtg BETWEEN '2010-07-01T00:00:00.000Z' AND '2010-07-31T00:00:00.000Z' AND attr2 = 'val56'"
   )
 
+  // id queries
   val idPredicates = Seq(
     "IN('|data|100001','|data|100002')" ,
     "IN('|data|100003','|data|100005') AND IN('|data|100001')",
@@ -241,6 +263,13 @@ object TestFilters {
     "WITHIN(geom, POLYGON ((40 20, 50 20, 50 30, 40 30, 40 20))) AND IN('|data|100001')",
     "IN('|data|100001') AND WITHIN(geom, POLYGON ((40 20, 50 20, 50 30, 40 30, 40 20)))",
     "dtg DURING 2010-06-01T00:00:00.000Z/2010-08-31T23:59:59.000Z AND IN('|data|100001','|data|100002')" +
-    "AND WITHIN(geom, POLYGON ((40 20, 50 20, 50 30, 40 30, 40 20))) AND attr2 = '2nd100001'"
+      "AND WITHIN(geom, POLYGON ((40 20, 50 20, 50 30, 40 30, 40 20))) AND attr2 = '2nd100001'"
+  )
+
+  // anything that can't be fulfilled with any other indexing strategy goes here
+  val nonIndexedPredicates = Seq(
+    "attr1 = 'val56'",
+    "attr1 ILIKE '2nd1%'",
+    "attr1 ILIKE '2nd1%'"
   )
 }

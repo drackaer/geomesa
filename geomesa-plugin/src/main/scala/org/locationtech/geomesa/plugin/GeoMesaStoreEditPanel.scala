@@ -1,3 +1,11 @@
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
+
 package org.locationtech.geomesa.plugin
 
 import org.apache.wicket.behavior.SimpleAttributeModifier
@@ -5,25 +13,9 @@ import org.apache.wicket.markup.html.form.{Form, FormComponent}
 import org.apache.wicket.markup.html.panel.Panel
 import org.apache.wicket.model.{IModel, ResourceModel}
 import org.geoserver.web.data.store.StoreEditPanel
-import org.geoserver.web.data.store.panel.{ParamPanel, PasswordParamPanel, TextParamPanel}
+import org.geoserver.web.data.store.panel.{CheckBoxParamPanel, ParamPanel, PasswordParamPanel, TextParamPanel}
 import org.geoserver.web.util.MapModel
 import org.geotools.data.DataAccessFactory.Param
-
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 
 abstract class GeoMesaStoreEditPanel (componentId: String, storeEditForm: Form[_])
     extends StoreEditPanel(componentId, storeEditForm) {
@@ -48,6 +40,16 @@ abstract class GeoMesaStoreEditPanel (componentId: String, storeEditForm: Form[_
         new MapModel(paramsModel, paramName).asInstanceOf[IModel[_]],
         new ResourceModel(resourceKey, paramName), required)
     addPanel(passParamPanel, param, resourceKey)
+  }
+
+  def addCheckBoxPanel(paramsModel: IModel[_], param: Param): FormComponent[_] = {
+    val paramName = param.key
+    val resourceKey = getClass.getSimpleName + "." + paramName
+    val checkboxPanel =
+      new CheckBoxParamPanel(paramName,
+        new MapModel(paramsModel, paramName).asInstanceOf[IModel[_]],
+        new ResourceModel(resourceKey, paramName))
+    addPanel(checkboxPanel, param, resourceKey)
   }
 
   def addPanel(paramPanel: Panel with ParamPanel, param: Param, resourceKey: String): FormComponent[_] = {

@@ -1,20 +1,10 @@
-/*
- *
- *  * Copyright 2014 Commonwealth Computer Research, Inc.
- *  *
- *  * Licensed under the Apache License, Version 2.0 (the License);
- *  * you may not use this file except in compliance with the License.
- *  * You may obtain a copy of the License at
- *  *
- *  * http://www.apache.org/licenses/LICENSE-2.0
- *  *
- *  * Unless required by applicable law or agreed to in writing, software
- *  * distributed under the License is distributed on an AS IS BASIS,
- *  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  * See the License for the specific language governing permissions and
- *  * limitations under the License.
- *
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 
 package org.locationtech.geomesa.plugin.ui
@@ -23,7 +13,7 @@ import java.io.File
 
 import com.google.common.io.Files
 import org.apache.accumulo.core.client.security.tokens.PasswordToken
-import org.apache.accumulo.core.client.{BatchWriterConfig, Connector, ZooKeeperInstance}
+import org.apache.accumulo.core.client.{Connector, ZooKeeperInstance}
 import org.apache.accumulo.core.data.Mutation
 import org.apache.accumulo.minicluster.MiniAccumuloCluster
 import org.apache.hadoop.io.Text
@@ -86,7 +76,7 @@ class GeoMesaDataStoresPageTest extends Specification {
       metadata.numEntries should be equalTo 450
       metadata.numSplits should be equalTo 100
       // exact file size varies slightly between runs... not sure why
-      Math.abs(metadata.fileSize - 0.026) should be lessThan 0.001
+      Math.abs(metadata.fileSize - 0.026*1024*1024) should be lessThan 0.001*1024*1024
     }
 
     step(stopCluster())

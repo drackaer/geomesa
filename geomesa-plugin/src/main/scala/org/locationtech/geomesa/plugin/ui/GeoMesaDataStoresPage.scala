@@ -1,22 +1,13 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.plugin.ui
 
-import org.apache.accumulo.core.Constants
 import org.apache.accumulo.core.client.{Connector, IsolatedScanner}
 import org.apache.accumulo.core.data.KeyExtent
 import org.apache.hadoop.io.Text
@@ -25,12 +16,15 @@ import org.apache.wicket.markup.html.list.{ListItem, ListView}
 import org.geoserver.catalog.StoreInfo
 import org.geoserver.web.data.store.{StorePanel, StoreProvider}
 import org.geotools.data.{DataStoreFinder, Query}
-import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
+import org.locationtech.geomesa.accumulo.AccumuloVersion._
 import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreFactory.params._
+import org.locationtech.geomesa.accumulo.data.tables._
+import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreFactory}
 import org.locationtech.geomesa.plugin.ui.components.DataStoreInfoPanel
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.util.Try
 
 class GeoMesaDataStoresPage extends GeoMesaBasePage {
 
@@ -39,7 +33,7 @@ class GeoMesaDataStoresPage extends GeoMesaBasePage {
   // TODO count in results chart shows total stores, not just the filtered ones
   private val storeProvider = new StoreProvider() {
     override def getFilteredItems: java.util.List[StoreInfo] = {
-      getItems.asScala.filter(_.getType == "Accumulo Feature Data Store").asJava
+      getItems.asScala.filter(_.getType == AccumuloDataStoreFactory.DISPLAY_NAME).asJava
     }
   }
 
@@ -68,11 +62,11 @@ class GeoMesaDataStoresPage extends GeoMesaBasePage {
     val dataStore = DataStoreFinder.getDataStore(params.asJava).asInstanceOf[AccumuloDataStore]
     dataStoreNames.append(name)
 
-    val featureNames = dataStore.getTypeNames.toList
+    val featureNames = dataStore.getTypeNames.filter(fn => Try(dataStore.getSchema(fn)).isSuccess).toList
     features.put(name, featureNames)
 
     val metadataPerFeature = featureNames.map { typeName =>
-      typeName -> getFeatureMetadata(dataStore, typeName, dataStore.catalogTable)
+      typeName -> getFeatureMetadata(dataStore, typeName)
     }.toMap[String, List[TableMetadata]]
     metadata.put(name, metadataPerFeature)
 
@@ -116,7 +110,7 @@ class GeoMesaDataStoresPage extends GeoMesaBasePage {
       map <- metadata.values
       (feature, metadataList) <- map
       metadata <- metadataList
-      if (metadata.displayName.contains("Record"))
+      if metadata.displayName.contains("Record")
     } {
       entries.append(s"""{name:"${metadata.feature}",value:${metadata.numEntries}}""")
       tables.append(s"""{name:"${metadata.feature}",table:"${metadata.table}"}""")
@@ -181,23 +175,25 @@ object GeoMesaDataStoresPage {
    *
    * @param dataStore
    * @param featureName
-   * @param table
    * @return
    *   (tableName, number of tablets, number of splits, total number of entries, total file size)
    */
-  def getFeatureMetadata(dataStore: AccumuloDataStore, featureName: String, table: String): List[TableMetadata] = {
+  def getFeatureMetadata(dataStore: AccumuloDataStore, featureName: String): List[TableMetadata] = {
     val connector = dataStore.connector
-
-    val tables =
-      if (dataStore.getGeomesaVersion(featureName) < 1) {
-        List(("Record Table/GeoSpatial Index", table))
-      } else {
-        List(("Record Table", dataStore.getRecordTable(featureName)),
-          ("GeoSpatial Index", dataStore.getSpatioTemporalTable(featureName)),
-          ("Attribute Index", dataStore.getAttributeTable(featureName)))
+    val sft = dataStore.getSchema(featureName)
+    val tables = GeoMesaTable.getTables(sft).map { t =>
+      val name = dataStore.getTableName(featureName, t)
+      val title = t match {
+        case RecordTable => "Record Index"
+        case AttributeTable | AttributeTableV5 => "Attribute Index"
+        case SpatioTemporalTable => "Spatio-temporal Index"
+        case Z3Table => "Z3 Spatio-temporal Index"
+        case _ => t.getClass.getSimpleName
       }
+      (title, name)
+    }
 
-    tables.map { case (displayName, table) =>
+    tables.toList.map { case (displayName, table) =>
       val tableId = Option(connector.tableOperations.tableIdMap.get(table))
       tableId match {
         case Some(id) => getTableMetadata(connector, featureName, table, id, displayName)
@@ -222,8 +218,8 @@ object GeoMesaDataStoresPage {
   def getTableMetadata(connector: Connector, featureName: String, tableName: String, tableId: String, displayName: String): TableMetadata = {
     // TODO move this to core utility class where it can be re-used
 
-    val scanner = new IsolatedScanner(connector.createScanner(Constants.METADATA_TABLE_NAME, Constants.NO_AUTHS))
-    scanner.fetchColumnFamily(Constants.METADATA_DATAFILE_COLUMN_FAMILY)
+    val scanner = new IsolatedScanner(connector.createScanner(AccumuloMetadataTableName, EmptyAuths))
+    scanner.fetchColumnFamily(AccumuloMetadataCF)
     scanner.setRange(new KeyExtent(new Text(tableId), null, null).toMetadataRange())
 
     var fileSize:Long = 0
@@ -231,17 +227,11 @@ object GeoMesaDataStoresPage {
     var numSplits:Long = 0
     var numTablets:Long = 0
 
-    var lastTablet = ""
-
     scanner.asScala.foreach {
       case entry =>
-        //  example cq: /t-0005bta/F0005bum.rf
-        val cq = entry.getKey.getColumnQualifier.toString
-        val tablet = cq.split("/")(1)
-        if (lastTablet != tablet) {
-          numTablets = numTablets + 1
-          lastTablet = tablet
-        }
+        //  Accumulo 1.5: example cq: /t-0005bta/F0005bum.rf  (for 1.5)
+        //  Different versions may have different internal structure.
+        numTablets = numTablets + 1
         // example value: 79362732,2171839
         val components = entry.getValue.toString.split(",")
         fileSize = fileSize + components(0).toLong
@@ -249,7 +239,7 @@ object GeoMesaDataStoresPage {
         numSplits = numSplits + 1
     }
 
-    TableMetadata(featureName, tableName, displayName, numTablets, numSplits, numEntries, fileSize / 1048576.0)
+    TableMetadata(featureName, tableName, displayName, numTablets, numSplits, numEntries, fileSize)
   }
 }
 
@@ -266,7 +256,7 @@ case class TableMetadata(feature: String,
                          numTablets: Long,
                          numSplits: Long,
                          numEntries: Long,
-                         fileSize: Double)
+                         fileSize: Long)
 
 case class FeatureData(workspace: String,
                        dataStore: String,

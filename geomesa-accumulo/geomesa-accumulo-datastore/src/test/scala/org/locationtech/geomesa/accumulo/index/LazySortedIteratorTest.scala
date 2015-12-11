@@ -1,26 +1,20 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.accumulo.index
 
 import java.util.NoSuchElementException
 
 import org.geotools.factory.CommonFactoryFinder
+import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.util.CloseableIterator
-import org.opengis.feature.simple.SimpleFeature
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
+import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.sort.{SortBy, SortOrder}
 import org.specs2.matcher.MatchResult
 import org.specs2.mock.Mockito
@@ -31,14 +25,23 @@ import org.specs2.runner.JUnitRunner
 class LazySortedIteratorTest extends Specification with Mockito {
 
   val ff = CommonFactoryFinder.getFilterFactory
-  
+
   "LazySortedIterator" should {
 
-    val a =  mockSF(1, "A", 7)
-    val b =  mockSF(2, "B", 9)
-    val c1 = mockSF(3, "C", 6)
-    val c2 = mockSF(4, "C", 9)
-    val d =  mockSF(5, "D", 6)
+    val sft = SimpleFeatureTypes.createType("ns:test", "age:Int,name:String,foo:Int")
+    val builder = new SimpleFeatureBuilder(sft)
+
+    def buildSF(id: Int, name: String, age: Int): SimpleFeature = {
+      import scala.collection.JavaConversions._
+      builder.reset()
+      builder.addAll(List[AnyRef](age : java.lang.Integer, name))
+      builder.buildFeature(id.toString)
+    }
+    val a =  buildSF(1, "A", 7)
+    val b =  buildSF(2, "B", 9)
+    val c1 = buildSF(3, "C", 6)
+    val c2 = buildSF(4, "C", 9)
+    val d =  buildSF(5, "D", 6)
 
     "lazily sort" >> {
 
@@ -47,7 +50,7 @@ class LazySortedIteratorTest extends Specification with Mockito {
         features.hasNext returns true thenReturns true thenReturns false
         features.next returns b thenReturns a thenThrows new NoSuchElementException
 
-        val test = new LazySortedIterator(features, Array(SortBy.NATURAL_ORDER))
+        val test = new LazySortedIterator(features, sft, Array(SortBy.NATURAL_ORDER))
 
         there was no(features).hasNext
         there was no(features).next
@@ -65,7 +68,7 @@ class LazySortedIteratorTest extends Specification with Mockito {
         features.hasNext returns true thenReturns true thenReturns false
         features.next returns b thenReturns a thenThrows new NoSuchElementException
 
-        val test = new LazySortedIterator(features, Array(SortBy.NATURAL_ORDER))
+        val test = new LazySortedIterator(features, sft, Array(SortBy.NATURAL_ORDER))
 
         there was no(features).hasNext
         there was no(features).next
@@ -83,14 +86,14 @@ class LazySortedIteratorTest extends Specification with Mockito {
       val features = CloseableIterator(Iterator(b, c1, d, a, c2))
       val sortBy = Array(SortBy.NATURAL_ORDER)
 
-      test(features, sortBy, Seq(a, b, c1, c2, d))
+      test(features, sortBy, Seq(a, b, c1, c2, d), sft)
     }
 
     "be able to sort by id desc" >> {
       val features = CloseableIterator(Iterator(b, c1, d, a, c2))
-      val sortBy =Array(SortBy.REVERSE_ORDER) 
-      
-      test(features, sortBy, Seq(d, c2, c1, b, a))
+      val sortBy =Array(SortBy.REVERSE_ORDER)
+
+      test(features, sortBy, Seq(d, c2, c1, b, a), sft)
     }
 
     "be able to sort by an attribute asc" >> {
@@ -98,7 +101,7 @@ class LazySortedIteratorTest extends Specification with Mockito {
       val sortBy = Array(ff.sort("name", SortOrder.ASCENDING))
 
       // sort is stable
-      test(features, sortBy, Seq(a, b, c2, c1, d))
+      test(features, sortBy, Seq(a, b, c2, c1, d), sft)
     }
 
     "be able to sort by an attribute desc" >> {
@@ -106,37 +109,30 @@ class LazySortedIteratorTest extends Specification with Mockito {
       val sortBy = Array(ff.sort("name", SortOrder.DESCENDING))
 
       // sort is stable
-      test(features, sortBy, Seq(d, c2, c1, b, a))
+      test(features, sortBy, Seq(d, c2, c1, b, a), sft)
     }
 
     "be able to sort by an attribute and id" >> {
       val features = CloseableIterator(Iterator(b, c2, d, a, c1))
       val sortBy = Array(ff.sort("name", SortOrder.ASCENDING), SortBy.NATURAL_ORDER)
 
-      test(features, sortBy, Seq(a, b, c1, c2, d))
+      test(features, sortBy, Seq(a, b, c1, c2, d), sft)
     }
 
     "be able to sort by an multiple attributes" >> {
       val features = CloseableIterator(Iterator(a, b, c1, d, c2))
       val sortBy = Array(ff.sort("age", SortOrder.DESCENDING), ff.sort("name", SortOrder.ASCENDING))
 
-      test(features, sortBy, Seq(b, c2, a, c1, d))
+      test(features, sortBy, Seq(b, c2, a, c1, d), sft)
     }
   }
 
-  def mockSF(id: Int, name: String, age: Int): SimpleFeature = {
-    val sf = mock[SimpleFeature]
-    sf.getID returns id.toString
-    sf.getAttribute("name") returns name
-    sf.getAttribute("age") returns age.asInstanceOf[AnyRef]
-    sf
-  }
-
   def test(features: CloseableIterator[SimpleFeature],
-             sortBy: Array[SortBy],
-             expected: Seq[SimpleFeature]): MatchResult[Any] = {
+           sortBy: Array[SortBy],
+           expected: Seq[SimpleFeature],
+           sft: SimpleFeatureType): MatchResult[Any] = {
 
-    val test = new LazySortedIterator(features, sortBy)
+    val test = new LazySortedIterator(features, sft, sortBy)
 
     expected.foreach {f =>
       test.hasNext must beTrue

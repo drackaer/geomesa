@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.process.unique
 
@@ -27,10 +19,10 @@ import org.geotools.feature.visitor.{AbstractCalcResult, CalcResult, FeatureCalc
 import org.geotools.process.factory.{DescribeParameter, DescribeProcess, DescribeResult}
 import org.geotools.process.vector.VectorProcess
 import org.locationtech.geomesa.accumulo.data.GEOMESA_UNIQUE
-import org.locationtech.geomesa.accumulo.data.tables.AttributeTable
 import org.locationtech.geomesa.accumulo.util.SelfClosingIterator
 import org.locationtech.geomesa.utils.geotools.RichAttributeDescriptors.RichAttributeDescriptor
 import org.opengis.feature.Feature
+import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeature
 import org.opengis.filter.Filter
 import org.opengis.util.ProgressListener
@@ -70,10 +62,10 @@ class UniqueProcess extends VectorProcess with Logging {
         .find(_.getLocalName == attribute)
         .getOrElse(throw new IllegalArgumentException(s"Attribute $attribute does not exist in feature schema."))
 
-    val hist = Option(histogram).map(_.booleanValue).getOrElse(false)
-    val sortBy = Option(sortByCount).map(_.booleanValue).getOrElse(false)
+    val hist = Option(histogram).exists(_.booleanValue)
+    val sortBy = Option(sortByCount).exists(_.booleanValue)
 
-    val visitor = new AttributeVisitor(features, attributeDescriptor.getLocalName, Option(filter), hist)
+    val visitor = new AttributeVisitor(features, attributeDescriptor, Option(filter), hist)
     features.accepts(visitor, progressListener)
     val uniqueValues = visitor.uniqueValues.toMap
 
@@ -139,18 +131,39 @@ class UniqueProcess extends VectorProcess with Logging {
  * Visitor that tracks unique attribute values and counts
  *
  * @param features
- * @param attribute
+ * @param attributeDescriptor
  * @param filter
  * @param histogram
  */
 class AttributeVisitor(val features: SimpleFeatureCollection,
-                       val attribute: String,
+                       val attributeDescriptor: AttributeDescriptor,
                        val filter: Option[Filter],
                        histogram: Boolean) extends FeatureCalc with Logging {
 
   import org.locationtech.geomesa.accumulo.process.unique.AttributeVisitor._
+  import org.locationtech.geomesa.utils.geotools.Conversions._
+
+  import scala.collection.JavaConversions._
+
+  val attribute    = attributeDescriptor.getLocalName
+  var attributeIdx: Int = -1
+  private def getAttribute[T](f: SimpleFeature) = {
+    if (attributeIdx == -1) {
+      attributeIdx = f.getType.indexOf(attribute)
+    }
+    f.get[T](attributeIdx)
+  }
+
 
   val uniqueValues = mutable.Map.empty[Any, Long].withDefaultValue(0)
+
+  private val addSingularValue = (f: SimpleFeature) => Option(getAttribute[AnyRef](f)).foreach(uniqueValues(_) += 1)
+  private val addMultiValue = (f: SimpleFeature) =>
+    getAttribute[java.util.Collection[_]](f) match {
+      case c if c != null => c.foreach(uniqueValues(_) += 1)
+      case _ => // do nothing
+    }
+  private val addValue = if(attributeDescriptor.isCollection) addMultiValue else addSingularValue
 
   /**
    * Called for non AccumuloFeatureCollections
@@ -174,12 +187,6 @@ class AttributeVisitor(val features: SimpleFeatureCollection,
   def setValue(features: SimpleFeatureCollection) =
     SelfClosingIterator(features.features()).foreach(addValue)
 
-  /**
-   * Adds an attribute to the result
-   *
-   * @param f
-   */
-  private def addValue(f: SimpleFeature) = Option(f.getAttribute(attribute)).foreach(uniqueValues(_) += 1)
 
   /**
    * Called by AccumuloFeatureSource to optimize the query plan
@@ -237,7 +244,7 @@ object AttributeVisitor {
    * @param attribute
    * @return
    */
-  def getIncludeAttributeFilter(attribute: String) = ff.greater(ff.property(attribute), ff.literal(""))
+  def getIncludeAttributeFilter(attribute: String) = ff.greaterOrEqual(ff.property(attribute), ff.literal(""))
 }
 
 /**

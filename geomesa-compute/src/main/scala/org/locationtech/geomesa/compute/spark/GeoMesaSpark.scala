@@ -1,23 +1,14 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.compute.spark
 
 import java.text.SimpleDateFormat
-import java.util.UUID
 
 import com.esotericsoftware.kryo.Kryo
 import com.esotericsoftware.kryo.io.{Input, Output}
@@ -25,23 +16,22 @@ import com.google.common.cache.{CacheBuilder, CacheLoader}
 import com.typesafe.scalalogging.slf4j.Logging
 import org.apache.accumulo.core.client.mapreduce.AccumuloInputFormat
 import org.apache.accumulo.core.client.mapreduce.lib.util.{ConfiguratorBase, InputConfigurator}
+import org.apache.accumulo.core.security.Authorizations
 import org.apache.accumulo.core.util.{Pair => AccPair}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.Text
 import org.apache.spark.rdd.RDD
 import org.apache.spark.serializer.KryoRegistrator
 import org.apache.spark.{SparkConf, SparkContext}
-import org.geotools.data.{DataStore, DataStoreFinder, DefaultTransaction, Query}
+import org.geotools.data._
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
-import org.locationtech.geomesa.accumulo.data.AccumuloDataStore
-import org.locationtech.geomesa.accumulo.index
-import org.locationtech.geomesa.accumulo.index.{ExplainNull, QueryPlanner, STIdxStrategy}
-import org.locationtech.geomesa.accumulo.stats.QueryStatTransform
+import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreFactory}
+import org.locationtech.geomesa.accumulo.index.QueryHints.RichHints
 import org.locationtech.geomesa.features.SimpleFeatureSerializers
 import org.locationtech.geomesa.features.kryo.serialization.SimpleFeatureSerializer
-import org.locationtech.geomesa.jobs.GeoMesaConfigurator
 import org.locationtech.geomesa.jobs.mapreduce.GeoMesaInputFormat
+import org.locationtech.geomesa.jobs.{GeoMesaConfigurator, JobUtils}
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter._
@@ -50,11 +40,16 @@ import scala.collection.JavaConversions._
 
 object GeoMesaSpark extends Logging {
 
-  def init(conf: SparkConf, ds: DataStore): SparkConf = {
-    val typeOptions = ds.getTypeNames.map { t => (t, SimpleFeatureTypes.encodeType(ds.getSchema(t))) }
+  def init(conf: SparkConf, ds: DataStore): SparkConf = init(conf, ds.getTypeNames.map(ds.getSchema))
+
+  def init(conf: SparkConf, sfts: Seq[SimpleFeatureType]): SparkConf = {
+    import GeoMesaInputFormat.SYS_PROP_SPARK_LOAD_CP
+    val typeOptions = sfts.map { sft => (sft.getTypeName, SimpleFeatureTypes.encodeType(sft)) }
     typeOptions.foreach { case (k,v) => System.setProperty(typeProp(k), v) }
-    val extraOpts = typeOptions.map { case (k,v) => jOpt(k, v) }.mkString(" ")
-    
+    val typeOpts = typeOptions.map { case (k,v) => jOpt(k, v) }
+    val jarOpt = sys.props.get(SYS_PROP_SPARK_LOAD_CP).map(v => s"-D$SYS_PROP_SPARK_LOAD_CP=$v")
+    val extraOpts = (typeOpts ++ jarOpt).mkString(" ")
+
     conf.set("spark.executor.extraJavaOptions", extraOpts)
     conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
     conf.set("spark.kryo.registrator", classOf[GeoMesaSparkKryoRegistrator].getName)
@@ -69,7 +64,7 @@ object GeoMesaSpark extends Logging {
           dsParams: Map[String, String],
           query: Query,
           numberOfSplits: Option[Int]): RDD[SimpleFeature] = {
-    rdd(conf, sc, dsParams, query, false, numberOfSplits)
+    rdd(conf, sc, dsParams, query, useMock = false, numberOfSplits)
   }
 
   def rdd(conf: Configuration,
@@ -80,20 +75,9 @@ object GeoMesaSpark extends Logging {
           numberOfSplits: Option[Int] = None): RDD[SimpleFeature] = {
     val ds = DataStoreFinder.getDataStore(dsParams).asInstanceOf[AccumuloDataStore]
     val typeName = query.getTypeName
-    val sft = ds.getSchema(typeName)
-    val spec = SimpleFeatureTypes.encodeType(sft)
-    val featureEncoding = ds.getFeatureEncoding(sft)
-    val indexSchema = ds.getIndexSchemaFmt(typeName)
-    val version = ds.getGeomesaVersion(sft)
-    val queryPlanner = new QueryPlanner(sft, featureEncoding, indexSchema, ds, ds.strategyHints(sft), version)
 
-    val qps = new STIdxStrategy().getQueryPlans(query, queryPlanner, ExplainNull)
-    if (qps.length > 1) {
-      logger.error("The query being executed requires multiple scans, which is not currently " +
-          "supported by geomesa. Your result set will be partially incomplete. This is most likely due to " +
-          s"an OR clause in your query. Query: ${QueryStatTransform.filterToString(query.getFilter)}")
-    }
-    val qp = qps.head
+    // get the query plan to set up the iterators, ranges, etc
+    val qp = JobUtils.getSingleQueryPlan(ds, query)
 
     ConfiguratorBase.setConnectorInfo(classOf[AccumuloInputFormat], conf, ds.connector.whoami(), ds.authToken)
 
@@ -107,11 +91,11 @@ object GeoMesaSpark extends Logging {
         ds.connector.getInstance().getInstanceName,
         ds.connector.getInstance().getZooKeepers)
     }
-    InputConfigurator.setInputTableName(classOf[AccumuloInputFormat], conf, ds.getSpatioTemporalTable(sft))
+    InputConfigurator.setInputTableName(classOf[AccumuloInputFormat], conf, qp.table)
     InputConfigurator.setRanges(classOf[AccumuloInputFormat], conf, qp.ranges)
     qp.iterators.foreach { is => InputConfigurator.addIterator(classOf[AccumuloInputFormat], conf, is)}
 
-    if (!qp.columnFamilies.isEmpty) {
+    if (qp.columnFamilies.nonEmpty) {
       InputConfigurator.fetchColumns(classOf[AccumuloInputFormat],
         conf,
         qp.columnFamilies.map(cf => new AccPair[Text, Text](cf, null)))
@@ -130,10 +114,13 @@ object GeoMesaSpark extends Logging {
       GeoMesaConfigurator.setFilter(conf, ECQL.toCQL(query.getFilter))
     }
 
-    index.getTransformSchema(query).foreach(GeoMesaConfigurator.setTransformSchema(conf, _))
+    query.getHints.getTransformSchema.foreach(GeoMesaConfigurator.setTransformSchema(conf, _))
+
+    // Configure Auths from DS
+    val auths = Option(AccumuloDataStoreFactory.params.authsParam.lookUp(dsParams).asInstanceOf[String])
+    auths.foreach(a => InputConfigurator.setScanAuthorizations(classOf[AccumuloInputFormat], conf, new Authorizations(a.split(","): _*)))
 
     sc.newAPIHadoopRDD(conf, classOf[GeoMesaInputFormat], classOf[Text], classOf[SimpleFeature]).map(U => U._2)
-
   }
 
   /**
@@ -149,8 +136,7 @@ object GeoMesaSpark extends Logging {
 
     rdd.foreachPartition { iter =>
       val ds = DataStoreFinder.getDataStore(writeDataStoreParams).asInstanceOf[AccumuloDataStore]
-      val transaction = new DefaultTransaction(UUID.randomUUID().toString)
-      val featureWriter = ds.getFeatureWriterAppend(writeTypeName, transaction)
+      val featureWriter = ds.getFeatureWriterAppend(writeTypeName, Transaction.AUTO_COMMIT)
       val attrNames = featureWriter.getFeatureType.getAttributeDescriptors.map(_.getLocalName)
       try {
         iter.foreach { case rawFeature =>
@@ -158,7 +144,6 @@ object GeoMesaSpark extends Logging {
           attrNames.foreach(an => newFeature.setAttribute(an, rawFeature.getAttribute(an)))
           featureWriter.write()
         }
-        transaction.commit()
       } finally {
         featureWriter.close()
       }

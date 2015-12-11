@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
@@ -24,7 +16,7 @@ import com.vividsolutions.jts.geom.Geometry
 import org.apache.accumulo.core.data.Value
 import org.joda.time.DateTime
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.data.INTERNAL_GEOMESA_VERSION
+import org.locationtech.geomesa.CURRENT_SCHEMA_VERSION
 import org.locationtech.geomesa.features.avro.AvroSimpleFeatureFactory
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes._
@@ -32,6 +24,7 @@ import org.locationtech.geomesa.utils.text.{WKBUtils, WKTUtils}
 import org.opengis.feature.simple.SimpleFeature
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 
 @RunWith(classOf[JUnitRunner])
 class IndexValueEncoderTest extends Specification {
@@ -44,29 +37,32 @@ class IndexValueEncoderTest extends Specification {
 
   // b/c the IndexValueEncoder caches feature types, we need to change the sft name for each test
   val index = new AtomicInteger(0)
-  def getSft(schema: String = defaultSchema) =
-    SimpleFeatureTypes.createType("IndexValueEncoderTest" + index.getAndIncrement, schema)
+  def getSft(schema: String = defaultSchema, version: Int = CURRENT_SCHEMA_VERSION) = {
+    val sft = SimpleFeatureTypes.createType("IndexValueEncoderTest" + index.getAndIncrement, schema)
+    sft.setSchemaVersion(version)
+    sft
+  }
 
   "IndexValueEncoder" should {
     "default to id,geom,date" in {
       val sft = getSft()
-      IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION).fields must containAllOf(Seq("geom", "dtg"))
+      IndexValueEncoder(sft).fields must containAllOf(Seq("geom", "dtg"))
     }
     "default to id,geom if no date" in {
       val sft = getSft("*geom:Geometry,foo:String")
-      IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION).fields must containAllOf(Seq("geom"))
+      IndexValueEncoder(sft).fields must containAllOf(Seq("geom"))
     }
     "allow custom fields to be set" in {
       val sft = getSft(s"*geom:Geometry:$OPT_INDEX_VALUE=true,dtg:Date:$OPT_INDEX_VALUE=true,s:String,i:Int:$OPT_INDEX_VALUE=true,d:Double,f:Float:$OPT_INDEX_VALUE=true,u:UUID,l:List[String]")
-      IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION).fields must containAllOf(Seq("geom", "dtg", "i", "f"))
+      IndexValueEncoder(sft).fields must containAllOf(Seq("geom", "dtg", "i", "f"))
     }
     "always include id,geom,dtg" in {
       val sft = getSft(s"*geom:Geometry,dtg:Date,s:String,i:Int:$OPT_INDEX_VALUE=true,d:Double,f:Float:$OPT_INDEX_VALUE=true,u:UUID,l:List[String]")
-      IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION).fields must containAllOf(Seq("geom", "dtg", "i", "f"))
+      IndexValueEncoder(sft).fields must containAllOf(Seq("geom", "dtg", "i", "f"))
     }
     "not allow complex types" in {
       val sft = getSft(s"*geom:Geometry:$OPT_INDEX_VALUE=true,dtg:Date:$OPT_INDEX_VALUE=true,l:List[String]:$OPT_INDEX_VALUE=true")
-      IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION).fields must containAllOf(Seq("geom", "dtg"))
+      IndexValueEncoder(sft).fields must containAllOf(Seq("geom", "dtg"))
     }
 
     "encode and decode id,geom,date" in {
@@ -76,7 +72,7 @@ class IndexValueEncoderTest extends Specification {
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, dt, null, null, null, null, null, null), id)
 
-      val encoder = IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION)
+      val encoder = IndexValueEncoder(sft)
 
       // output
       val value = encoder.encode(entry)
@@ -101,7 +97,7 @@ class IndexValueEncoderTest extends Specification {
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, null, null, null, null, null, null, null), id)
 
-      val encoder = IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION)
+      val encoder = IndexValueEncoder(sft)
 
       // output
       val value = encoder.encode(entry)
@@ -131,7 +127,7 @@ class IndexValueEncoderTest extends Specification {
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, dt, s, i, d, f, u, null), id)
 
-      val encoder = IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION)
+      val encoder = IndexValueEncoder(sft)
 
       // output
       val value = encoder.encode(entry)
@@ -165,7 +161,7 @@ class IndexValueEncoderTest extends Specification {
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, null, null, i, d, f, null, null), id)
 
-      val encoder = IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION)
+      val encoder = IndexValueEncoder(sft)
 
       // output
       val value = encoder.encode(entry)
@@ -190,10 +186,10 @@ class IndexValueEncoderTest extends Specification {
     }
 
     "maintain backwards compatibility" in {
-      val sft = getSft()
+      val sft = getSft(version = 0)
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, dt, null, null, null, null, null, null), id)
-      val encoder = IndexValueEncoder(sft, 0)
+      val encoder = IndexValueEncoder(sft)
       val encoded = _encodeIndexValue(entry)
       val decoded = encoder.decode(encoded.get())
       decoded must not beNull;
@@ -211,8 +207,8 @@ class IndexValueEncoderTest extends Specification {
       val entry = AvroSimpleFeatureFactory.buildAvroFeature(sft,
         List(geom, dt, null, null, null, null, null, null), id)
 
-      val encoder = IndexValueEncoder(sft, INTERNAL_GEOMESA_VERSION)
-      val oldEncoder = IndexValueEncoder(sft, 0)
+      val encoder = IndexValueEncoder(sft)
+      val oldEncoder = IndexValueEncoder(getSft(version = 0))
 
       var totalEncodeNew = 0L
       var totalDecodeNew = 0L

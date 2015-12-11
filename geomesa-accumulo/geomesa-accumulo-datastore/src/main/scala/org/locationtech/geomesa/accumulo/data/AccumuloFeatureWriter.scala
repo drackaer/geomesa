@@ -1,22 +1,14 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.data
 
-import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 import com.typesafe.scalalogging.slf4j.Logging
 import org.apache.accumulo.core.client.BatchWriter
@@ -28,25 +20,28 @@ import org.geotools.data.simple.SimpleFeatureWriter
 import org.geotools.data.{DataUtilities, Query}
 import org.geotools.factory.Hints
 import org.geotools.filter.identity.FeatureIdImpl
-import org.locationtech.geomesa.accumulo.data.AccumuloFeatureWriter._
+import org.locationtech.geomesa.accumulo.GeomesaSystemProperties.FeatureIdProperties.FEATURE_ID_GENERATOR
+import org.locationtech.geomesa.accumulo.data.AccumuloFeatureWriter.{FeatureToWrite, FeatureWriterFn}
 import org.locationtech.geomesa.accumulo.data.tables._
 import org.locationtech.geomesa.accumulo.index._
+import org.locationtech.geomesa.accumulo.util.{GeoMesaBatchWriterConfig, Z3FeatureIdGenerator}
 import org.locationtech.geomesa.features.{ScalaSimpleFeature, ScalaSimpleFeatureFactory, SimpleFeatureSerializer}
-import org.locationtech.geomesa.security.SecurityUtils
-import SecurityUtils.FEATURE_VISIBILITY
-import org.locationtech.geomesa.accumulo.util.GeoMesaBatchWriterConfig
+import org.locationtech.geomesa.security.SecurityUtils.FEATURE_VISIBILITY
+import org.locationtech.geomesa.utils.uuid.FeatureIdGenerator
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
 import scala.collection.JavaConversions._
 
-object AccumuloFeatureWriter {
+object AccumuloFeatureWriter extends Logging {
 
   type FeatureToMutations = (FeatureToWrite) => Seq[Mutation]
   type FeatureWriterFn    = (FeatureToWrite) => Unit
   type TableAndWriter     = (String, FeatureToMutations)
 
   type AccumuloRecordWriter = RecordWriter[Key, Value]
+
+  val tempFeatureIds = new AtomicLong(0)
 
   class FeatureToWrite(val feature: SimpleFeature,
                        defaultVisibility: String,
@@ -67,18 +62,49 @@ object AccumuloFeatureWriter {
   /**
    * Gets writers and table names for each table (e.g. index) that supports the sft
    */
-  def getTablesAndWriters(sft: SimpleFeatureType, ds: AccumuloConnectorCreator): Seq[TableAndWriter] = {
-    val tablesAndNames = GeoMesaTable.getTablesAndNames(sft, ds)
-    tablesAndNames.flatMap { case (table, name) => table.writer(sft).map((name, _)) }
-  }
+  def getTablesAndWriters(sft: SimpleFeatureType, ds: AccumuloConnectorCreator): Seq[TableAndWriter] =
+    GeoMesaTable.getTables(sft).map(table => (ds.getTableName(sft.getTypeName, table), table.writer(sft)))
 
   /**
    * Gets removers and table names for each table (e.g. index) that supports the sft
    */
-  def getTablesAndRemovers(sft: SimpleFeatureType, ds: AccumuloConnectorCreator): Seq[TableAndWriter] = {
-    val tablesAndNames = GeoMesaTable.getTablesAndNames(sft, ds)
-    tablesAndNames.flatMap { case (table, name) => table.remover(sft).map((name, _)) }
+  def getTablesAndRemovers(sft: SimpleFeatureType, ds: AccumuloConnectorCreator): Seq[TableAndWriter] =
+    GeoMesaTable.getTables(sft).map(table => (ds.getTableName(sft.getTypeName, table), table.remover(sft)))
+
+  private val idGenerator: FeatureIdGenerator =
+    try {
+      logger.debug(s"Using feature id generator '${FEATURE_ID_GENERATOR.get}'")
+      Class.forName(FEATURE_ID_GENERATOR.get).newInstance().asInstanceOf[FeatureIdGenerator]
+    } catch {
+      case e: Throwable =>
+        logger.error(s"Could not load feature id generator class '${FEATURE_ID_GENERATOR.get}'", e)
+        new Z3FeatureIdGenerator
+    }
+
+  /**
+   * Sets the feature ID on the feature. If the user has requested a specific ID, that will be used,
+   * otherwise one will be generated. If possible, the original feature will be modified and returned.
+   */
+  def featureWithFid(sft: SimpleFeatureType, feature: SimpleFeature): SimpleFeature = {
+    if (feature.getUserData.containsKey(Hints.PROVIDED_FID)) {
+      withFid(sft, feature, feature.getUserData.get(Hints.PROVIDED_FID).toString)
+    } else if (feature.getUserData.containsKey(Hints.USE_PROVIDED_FID) &&
+        feature.getUserData.get(Hints.USE_PROVIDED_FID).asInstanceOf[Boolean]) {
+      feature
+    } else {
+      withFid(sft, feature, idGenerator.createId(sft, feature))
+    }
   }
+
+  private def withFid(sft: SimpleFeatureType, feature: SimpleFeature, fid: String): SimpleFeature =
+    feature.getIdentifier match {
+      case f: FeatureIdImpl =>
+        f.setID(fid)
+        feature
+      case f =>
+        logger.warn(s"Unknown feature ID implementation found, rebuilding feature: ${f.getClass} $f")
+        ScalaSimpleFeatureFactory.copyFeature(sft, feature, fid)
+    }
 }
 
 abstract class AccumuloFeatureWriter(sft: SimpleFeatureType,
@@ -91,16 +117,14 @@ abstract class AccumuloFeatureWriter(sft: SimpleFeatureType,
 
   // A "writer" is a function that takes a simple feature and writes it to an index or table
   protected val writer: FeatureWriterFn = {
-    val writers = getTablesAndWriters(sft, ds).map {
+    val writers = AccumuloFeatureWriter.getTablesAndWriters(sft, ds).map {
       case (table, write) => (multiBWWriter.getBatchWriter(table), write)
     }
-    featureWriter(writers)
+    AccumuloFeatureWriter.featureWriter(writers)
   }
 
-  /* Return a String representing nextId - use UUID.random for universal uniqueness across multiple ingest nodes */
-  protected def nextFeatureId = UUID.randomUUID().toString
-
-  protected val builder = ScalaSimpleFeatureFactory.featureBuilder(sft)
+  // returns a temporary id - we will replace it just before write
+  protected def nextFeatureId = AccumuloFeatureWriter.tempFeatureIds.getAndIncrement().toString
 
   protected def writeToAccumulo(feature: SimpleFeature): Unit = {
     // require non-null geometry to write to geomesa (can't index null geo, yo)
@@ -109,22 +133,10 @@ abstract class AccumuloFeatureWriter(sft: SimpleFeatureType,
       return
     }
 
-    // see if there's a suggested ID to use for this feature
-    val withFid = if (feature.getUserData.containsKey(Hints.PROVIDED_FID)) {
-      val id = feature.getUserData.get(Hints.PROVIDED_FID).toString
-      feature.getIdentifier match {
-        case fid: FeatureIdImpl =>
-          fid.setID(id)
-          feature
-        case _ =>
-          builder.init(feature)
-          builder.buildFeature(id)
-      }
-    } else {
-      feature
-    }
+    // see if there's a suggested ID to use for this feature, else create one based on the feature
+    val featureWithFid = AccumuloFeatureWriter.featureWithFid(sft, feature)
 
-    writer(new FeatureToWrite(withFid, defaultVisibility, encoder, indexValueEncoder))
+    writer(new FeatureToWrite(featureWithFid, defaultVisibility, encoder, indexValueEncoder))
   }
 
   override def getFeatureType: SimpleFeatureType = sft
@@ -134,6 +146,8 @@ abstract class AccumuloFeatureWriter(sft: SimpleFeatureType,
   override def remove(): Unit = {}
 
   override def hasNext: Boolean = false
+
+  def flush(): Unit = multiBWWriter.flush()
 }
 
 class AppendAccumuloFeatureWriter(sft: SimpleFeatureType,
@@ -175,10 +189,10 @@ class ModifyAccumuloFeatureWriter(sft: SimpleFeatureType,
   // version of the datastore (i.e. single table vs catalog
   // table + index tables)
   val remover: FeatureWriterFn = {
-    val writers = getTablesAndRemovers(sft, ds).map {
+    val writers = AccumuloFeatureWriter.getTablesAndRemovers(sft, ds).map {
       case (table, write) => (multiBWWriter.getBatchWriter(table), write)
     }
-    featureWriter(writers)
+    AccumuloFeatureWriter.featureWriter(writers)
   }
 
   override def remove() = if (original != null) {
@@ -202,10 +216,12 @@ class ModifyAccumuloFeatureWriter(sft: SimpleFeatureType,
     original = null
     live = if (hasNext) {
       original = reader.next()
-      builder.init(original) // this copies user data as well
-      builder.buildFeature(original.getID)
+      // set the use provided FID hint - allows user to update fid if desired,
+      // but if not we'll use the existing one
+      original.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.TRUE)
+      ScalaSimpleFeatureFactory.copyFeature(sft, original, original.getID) // this copies user data as well
     } else {
-      builder.buildFeature(nextFeatureId)
+      ScalaSimpleFeatureFactory.buildFeature(sft, Seq.empty, nextFeatureId)
     }
     live
   }

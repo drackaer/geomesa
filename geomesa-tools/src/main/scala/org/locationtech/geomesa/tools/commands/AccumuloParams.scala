@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.tools.commands
 
 import java.util.regex.Pattern
@@ -68,7 +60,7 @@ class OptionalCqlFilterParameters extends FeatureParams {
 }
 
 class CreateFeatureParams extends FeatureParams {
-  @Parameter(names = Array("-s", "--spec"), description = "SimpleFeatureType specification", required = true)
+  @Parameter(names = Array("-s", "--spec"), description = "SimpleFeatureType specification as a GeoTools spec string, SFT config, or file with either")
   var spec: String = null
 
   @Parameter(names = Array("-dt", "--dtg"), description = "DateTime field name to use as the default dtg")
@@ -76,9 +68,6 @@ class CreateFeatureParams extends FeatureParams {
 
   @Parameter(names = Array("-st", "--use-shared-tables"), description = "Use shared tables in Accumulo for feature storage (true/false)", arity = 1)
   var useSharedTables: Boolean = true //default to true in line with datastore
-
-  @Parameter(names = Array("-sh", "--shards"), description = "Number of shards to use for the storage tables (defaults to number of tservers)")
-  var numShards: Integer = null
 }
 
 class ForceParams {
@@ -89,4 +78,20 @@ class ForceParams {
 class PatternParams {
   @Parameter(names = Array("-pt", "--pattern"), description = "Regular expression to select items to delete", required = false)
   var pattern: Pattern = null
+}
+
+class RasterParams extends AccumuloParams {
+  @Parameter(names = Array("-t", "--raster-table"), description = "Accumulo table for storing raster data", required = true)
+  var table: String = null
+}
+
+class CreateRasterParams extends RasterParams {
+  @Parameter(names = Array("-wm", "--write-memory"), description = "Memory allocation for ingestion operation")
+  var writeMemory: String = null
+
+  @Parameter(names = Array("-wt", "--write-threads"), description = "Threads for writing raster data")
+  var writeThreads: Integer = null
+
+  @Parameter(names = Array("-qt", "--query-threads"), description = "Threads for quering raster data")
+  var queryThreads: Integer = null
 }

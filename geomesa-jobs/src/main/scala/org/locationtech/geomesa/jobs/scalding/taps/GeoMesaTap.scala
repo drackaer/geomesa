@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.scalding.taps
 
@@ -129,10 +121,8 @@ case class GeoMesaScheme(options: GeoMesaSourceOptions)
   }
 
   override def source(fp: FlowProcess[JobConf], sc: SourceCall[Array[Any], GMRecordReader]): Boolean = {
-    val context = sc.getContext
-    val k = context(0).asInstanceOf[Text]
-    val v = context(1).asInstanceOf[SimpleFeature]
-
+    val k = sc.getInput.createKey()
+    val v = sc.getInput.createValue()
     val hasNext = sc.getInput.next(k, v)
     if (hasNext) {
       sc.getIncomingEntry.setTuple(new Tuple(k, v))
@@ -146,10 +136,4 @@ case class GeoMesaScheme(options: GeoMesaSourceOptions)
     val sf = entry.getObject(1).asInstanceOf[SimpleFeature]
     sc.getOutput.collect(id, sf)
   }
-
-  override def sourcePrepare(fp: FlowProcess[JobConf], sc: SourceCall[Array[Any], GMRecordReader]): Unit =
-    sc.setContext(Array(sc.getInput.createKey(), sc.getInput.createValue()))
-
-  override def sourceCleanup(fp: FlowProcess[JobConf], sc: SourceCall[Array[Any], GMRecordReader]): Unit =
-    sc.setContext(null)
 }

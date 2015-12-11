@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.scalding.taps
 
@@ -31,6 +23,7 @@ import org.apache.accumulo.core.data.{Key, Mutation, Value}
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.{JobConf, Reporter}
 import org.locationtech.geomesa.accumulo.util.GeoMesaBatchWriterConfig
+import org.locationtech.geomesa.jobs.mapred.InputFormatBaseAdapter
 import org.locationtech.geomesa.jobs.scalding._
 
 import scala.util.{Failure, Success, Try}
@@ -132,10 +125,10 @@ case class AccumuloScheme(options: AccumuloSourceOptions)
 
     // this method may be called more than once so check to see if we've already configured
     if (!ConfiguratorBase.isConnectorInfoSet(classOf[AccumuloInputFormat], conf)) {
-      InputFormatBase.setZooKeeperInstance(conf, input.instance, input.zooKeepers)
-      InputFormatBase.setConnectorInfo(conf, input.user, new PasswordToken(input.password.getBytes))
+      InputFormatBaseAdapter.setZooKeeperInstance(conf, input.instance, input.zooKeepers)
+      InputFormatBaseAdapter.setConnectorInfo(conf, input.user, new PasswordToken(input.password.getBytes))
       InputFormatBase.setInputTableName(conf, input.table)
-      InputFormatBase.setScanAuthorizations(conf, input.authorizations)
+      InputFormatBaseAdapter.setScanAuthorizations(conf, input.authorizations)
       if (input.ranges.nonEmpty) {
         val ranges = input.ranges.collect { case SerializedRangeSeq(r) => r }
         InputFormatBase.setRanges(conf, ranges)
@@ -149,7 +142,7 @@ case class AccumuloScheme(options: AccumuloSourceOptions)
       input.localIterators.foreach(InputFormatBase.setLocalIterators(conf, _))
       input.offlineTableScan.foreach(InputFormatBase.setOfflineTableScan(conf, _))
       input.scanIsolation.foreach(InputFormatBase.setScanIsolation(conf, _))
-      input.logLevel.foreach(InputFormatBase.setLogLevel(conf, _))
+      input.logLevel.foreach(InputFormatBaseAdapter.setLogLevel(conf, _))
     }
 
     conf.setInputFormat(classOf[AccumuloInputFormat])

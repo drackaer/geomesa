@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.utils.geotools
 
@@ -23,6 +15,7 @@ import org.specs2.mock.Mockito
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import scala.collection.JavaConverters._
 import scala.collection.immutable.HashMap
 
 @RunWith(classOf[JUnitRunner])
@@ -137,5 +130,68 @@ sequential
 
       sf.geometry must throwA[ClassCastException]
     }
+
+    "provide type safe access to user data" >> {
+
+      val expected: Integer = 5
+
+      val userData = Map[AnyRef, AnyRef]("key" -> expected).asJava
+      sf.getUserData returns userData
+
+      "when type is correct" >> {
+
+        val result = sf.userData[Integer]("key")
+        result must beSome(expected)
+      }
+
+      "or none when type is not correct" >> {
+
+        val result = sf.userData[String]("key")
+        result must beNone
+      }
+
+      "or none when value does not exist" >> {
+
+        val result: Option[String] = sf.userData[String]("foo")
+        result must beNone
+      }
+    }
+  }
+
+  "RichSimpleFeatureType" should {
+
+    import RichSimpleFeatureType.RichSimpleFeatureType
+
+    def newSft = SimpleFeatureTypes.createType("test", "dtg:Date,*geom:Point:srid=4326")
+    "support implicit conversion" >> {
+      val sft = newSft
+      val rsft: RichSimpleFeatureType = sft
+      success
+    }
+
+    "set and get table sharing boolean" >> {
+      val sft = newSft
+      sft.setTableSharing(true)
+      sft.isTableSharing must beTrue
+    }
+
+    "provide type safe access to user data" >> {
+
+      val expected: Integer = 5
+
+      val sft = newSft
+      sft.getUserData.put("key", expected)
+
+      "when type is correct" >> {
+        val result = sft.userData[Integer]("key")
+        result must beSome(expected)
+      }
+
+      "or none when value does not exist" >> {
+        val result: Option[String] = sft.userData[String]("foo")
+        result must beNone
+      }
+    }
+
   }
 }

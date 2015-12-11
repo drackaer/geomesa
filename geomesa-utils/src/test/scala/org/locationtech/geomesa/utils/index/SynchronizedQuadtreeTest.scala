@@ -1,41 +1,33 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.utils.index
 
-import java.util.ConcurrentModificationException
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.Lock
 
 import com.typesafe.scalalogging.slf4j.Logging
-import com.vividsolutions.jts.index.quadtree.Quadtree
+import com.vividsolutions.jts.geom.Point
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
-import scala.util.{Random, Try}
+import scala.util.Random
 
 @RunWith(classOf[JUnitRunner])
 class SynchronizedQuadtreeTest extends Specification with Logging {
 
   "SynchronizedQuadtree" should {
+
     "be thread safe" in {
-      val qt = new SynchronizedQuadtree
-      val pt = WKTUtils.read("POINT(45 50)")
+      val qt = new SynchronizedQuadtree[Point]
+      val pt = WKTUtils.read("POINT(45 50)").asInstanceOf[Point]
       val env = pt.getEnvelopeInternal
       val wholeWorld = WKTUtils.read("POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))").getEnvelopeInternal
       val t1 = new Thread(new Runnable() {
@@ -59,35 +51,6 @@ class SynchronizedQuadtreeTest extends Specification with Logging {
       success
     }
 
-    "normal quadtree should not be thread safe" in {
-      val qt = new Quadtree
-      val pt = WKTUtils.read("POINT(45 50)")
-      val env = pt.getEnvelopeInternal
-      val wholeWorld = WKTUtils.read("POLYGON((-180 -90,180 -90,180 90,-180 90,-180 -90))").getEnvelopeInternal
-      val t1 = new Thread(new Runnable() {
-        override def run() = {
-          var i = 0
-          while (i < 1000) {
-            qt.insert(env, pt)
-            Thread.sleep(1)
-            i += 1
-          }
-        }
-      })
-      t1.start()
-      val read = Try({
-        var i = 0
-        while (i < 1000) {
-          qt.query(wholeWorld)
-          Thread.sleep(1)
-          i += 1
-        }
-      })
-      read should beAFailedTry(beAnInstanceOf[ConcurrentModificationException])
-      t1.join()
-      success
-    }
-
     "support high throughput" in {
 
       skipped("integration")
@@ -98,7 +61,7 @@ class SynchronizedQuadtreeTest extends Specification with Logging {
       // pre-populate with some data
       val points = (1 to 999999).map { _ =>
         val (x, y) = (rand.nextInt(360) - 180 + rand.nextDouble(), rand.nextInt(180) - 90 + rand.nextDouble())
-        WKTUtils.read(s"POINT($x $y)")
+        WKTUtils.read(s"POINT($x $y)").asInstanceOf[Point]
       }
       points.foreach(pt => qt.insert(pt.getEnvelopeInternal, pt))
       qt.writeWait.set(0)
@@ -114,7 +77,7 @@ class SynchronizedQuadtreeTest extends Specification with Logging {
           while (System.currentTimeMillis() < endTime) {
             Thread.sleep(rand.nextInt(10))
             val (x, y) = (rand.nextInt(360) - 180 + rand.nextDouble(), rand.nextInt(180) - 90 + rand.nextDouble())
-            val pt = WKTUtils.read(s"POINT($x $y)")
+            val pt = WKTUtils.read(s"POINT($x $y)").asInstanceOf[Point]
             qt.insert(pt.getEnvelopeInternal, pt)
           }
         }
@@ -152,7 +115,7 @@ class SynchronizedQuadtreeTest extends Specification with Logging {
       println("Write rate: " + (qt.totalWrites.get / 10) + "/s")
       println("Average time waiting for write: " + (qt.writeWait.get / qt.totalWrites.get) + "ms")
       println("Max time waiting for write: " + qt.maxWriteWait.get + "ms")
-      println
+      println()
 
       // Average results:
 
@@ -170,7 +133,7 @@ class SynchronizedQuadtreeTest extends Specification with Logging {
   }
 }
 
-class SynchronizedQuadtreeWithMetrics extends SynchronizedQuadtree {
+class SynchronizedQuadtreeWithMetrics extends SynchronizedQuadtree[Point] {
 
   val readWait = new AtomicLong()
   val writeWait = new AtomicLong()

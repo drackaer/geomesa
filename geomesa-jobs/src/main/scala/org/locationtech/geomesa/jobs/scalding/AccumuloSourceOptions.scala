@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.scalding
 
@@ -51,6 +43,17 @@ case class AccumuloInputOptions(
     scanIsolation: Option[Boolean] = None,
     logLevel: Option[Level] = None) extends AccumuloSourceOptions
 
+object AccumuloInputOptions {
+  def apply(dsParams: Map[String, String]) = {
+    new AccumuloInputOptions(
+      dsParams.getOrElse("instanceId", "None"),
+      dsParams.getOrElse("zookeepers", "None"),
+      dsParams.getOrElse("user", "None"),
+      dsParams.getOrElse("password", "None"),
+      dsParams.getOrElse("tableName", "None"))
+  }
+}
+
 case class AccumuloOutputOptions(
     instance: String,
     zooKeepers: String,
@@ -61,6 +64,18 @@ case class AccumuloOutputOptions(
     memory: Option[Long] = None,
     createTable: Boolean = false,
     logLevel: Option[Level] = None) extends AccumuloSourceOptions
+
+object AccumuloOutputOptions {
+  def apply(dsParams: Map[String, String]) = {
+    new AccumuloOutputOptions(
+      dsParams.getOrElse("instanceId", "None"),
+      dsParams.getOrElse("zookeepers", "None"),
+      dsParams.getOrElse("user", "None"),
+      dsParams.getOrElse("password", "None"),
+      dsParams.getOrElse("tableName", "None"),
+      createTable = true)
+  }
+}
 
 case class SerializedRange(start: Endpoint, end: Endpoint)
 
@@ -82,13 +97,13 @@ object SerializedRange {
      */
 
     def startBracket = """[\(\[]""".r ^^ {
-      case b if b == "(" => Bracket(false)
-      case b if b == "[" => Bracket(true)
+      case b if b == "(" => Bracket(inclusive = false)
+      case b if b == "[" => Bracket(inclusive = true)
     }
 
     def endBracket = """[\)\]]""".r ^^ {
-      case b if b == ")" => Bracket(false)
-      case b if b == "]" => Bracket(true)
+      case b if b == ")" => Bracket(inclusive = false)
+      case b if b == "]" => Bracket(inclusive = true)
     }
 
     def part = """[^\[\]\(\),\s]+""".r
@@ -133,15 +148,15 @@ object SerializedRange {
       sb.clear()
       if (r.isStartKeyInclusive) sb.append("[") else sb.append("(")
       if (!r.isInfiniteStartKey) {
-        sb.append(r.getStartKey.getRow().toString)
-        sb.append(" ").append(r.getStartKey.getColumnFamily().toString)
-        sb.append(" ").append(r.getStartKey.getColumnQualifier().toString)
+        sb.append(r.getStartKey.getRow.toString)
+        sb.append(" ").append(r.getStartKey.getColumnFamily.toString)
+        sb.append(" ").append(r.getStartKey.getColumnQualifier.toString)
       }
       sb.append(",")
       if (!r.isInfiniteStopKey) {
-        sb.append(r.getEndKey.getRow().toString)
-        sb.append(" ").append(r.getEndKey.getColumnFamily().toString)
-        sb.append(" ").append(r.getEndKey.getColumnQualifier().toString)
+        sb.append(r.getEndKey.getRow.toString)
+        sb.append(" ").append(r.getEndKey.getColumnFamily.toString)
+        sb.append(" ").append(r.getEndKey.getColumnQualifier.toString)
       }
       if (r.isEndKeyInclusive) sb.append("]") else sb.append(")")
       sb.toString()

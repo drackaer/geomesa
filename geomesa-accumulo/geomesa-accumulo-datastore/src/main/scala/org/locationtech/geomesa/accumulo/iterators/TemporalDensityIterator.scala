@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.iterators
 
@@ -26,15 +18,19 @@ import org.apache.accumulo.core.iterators.{IteratorEnvironment, SortedKeyValueIt
 import org.apache.commons.codec.binary.Base64
 import org.codehaus.jackson.`type`.TypeReference
 import org.codehaus.jackson.map.ObjectMapper
+import org.geotools.data.Query
 import org.geotools.feature.simple.SimpleFeatureBuilder
 import org.geotools.geometry.jts.JTSFactoryFinder
 import org.joda.time.format.DateTimeFormat
 import org.joda.time.{DateTime, DateTimeZone, Interval}
-import org.locationtech.geomesa.accumulo.index.getDtgFieldName
+import org.locationtech.geomesa.accumulo.index.QueryHints._
+import org.locationtech.geomesa.accumulo.index.QueryPlanner.SFIter
 import org.locationtech.geomesa.accumulo.iterators.FeatureAggregatingIterator.Result
 import org.locationtech.geomesa.accumulo.iterators.TemporalDensityIterator.TimeSeries
+import org.locationtech.geomesa.features.ScalaSimpleFeatureFactory
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes.buildTypeName
-import org.locationtech.geomesa.utils.geotools.{SimpleFeatureTypes, TimeSnap}
+import org.locationtech.geomesa.utils.geotools.{GeometryUtils, SimpleFeatureTypes, TimeSnap}
 import org.opengis.feature.simple.SimpleFeatureType
 
 import scala.collection.JavaConversions._
@@ -57,7 +53,7 @@ class TemporalDensityIterator(other: TemporalDensityIterator, env: IteratorEnvir
                                                          options: JMap[String, String],
                                                          env: IteratorEnvironment): Unit = {
 
-    dateTimeFieldName = getDtgFieldName(simpleFeatureType).getOrElse ( throw new IllegalArgumentException("dtg field required"))
+    dateTimeFieldName = simpleFeatureType.getDtgField.getOrElse(throw new IllegalArgumentException("dtg field required"))
 
     val buckets = TemporalDensityIterator.getBuckets(options)
     val bounds = TemporalDensityIterator.getTimeBounds(options)
@@ -168,6 +164,27 @@ object TemporalDensityIterator extends Logging {
       table.put(dateIdx, weight)
     }
     table
+  }
+
+  def reduceTemporalFeatures(features: SFIter, query: Query): SFIter = {
+    val encode = query.getHints.containsKey(RETURN_ENCODED)
+    val sft = query.getHints.getReturnSft
+
+    val timeSeriesStrings = features.map(f => decodeTimeSeries(f.getAttribute(TIME_SERIES).toString))
+    val summedTimeSeries = timeSeriesStrings.reduceOption(combineTimeSeries)
+
+    val feature = summedTimeSeries.map { sum =>
+      val featureBuilder = ScalaSimpleFeatureFactory.featureBuilder(sft)
+      if (encode) {
+        featureBuilder.add(TemporalDensityIterator.encodeTimeSeries(sum))
+      } else {
+        featureBuilder.add(timeSeriesToJSON(sum))
+      }
+      featureBuilder.add(GeometryUtils.zeroPoint) // Filler value as Feature requires a geometry
+      featureBuilder.buildFeature(null)
+    }
+
+    feature.iterator
   }
 }
 

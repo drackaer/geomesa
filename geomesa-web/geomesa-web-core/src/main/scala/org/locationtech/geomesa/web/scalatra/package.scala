@@ -1,10 +1,17 @@
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.web
 
 import java.security.cert.X509Certificate
 import javax.servlet.http.{HttpServletRequest, HttpServletResponse}
 
 import org.scalatra.ScalatraBase
-import org.scalatra.auth.{ScentryStrategy, ScentryConfig, ScentrySupport}
+import org.scalatra.auth.{ScentryConfig, ScentryStrategy, ScentrySupport}
 
 package object scalatra {
 

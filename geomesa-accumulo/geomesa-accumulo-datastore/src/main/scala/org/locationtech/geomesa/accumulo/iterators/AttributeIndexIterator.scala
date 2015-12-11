@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.iterators
 
@@ -20,8 +12,9 @@ import org.apache.accumulo.core.data._
 import org.apache.accumulo.core.iterators.{IteratorEnvironment, SortedKeyValueIterator}
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder
 import org.locationtech.geomesa.accumulo._
-import org.locationtech.geomesa.accumulo.data.tables.AttributeTable._
+import org.locationtech.geomesa.accumulo.data.tables.AttributeTableV5
 import org.locationtech.geomesa.features.ScalaSimpleFeature
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.stats.IndexCoverage
 import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.SimpleFeature
@@ -36,6 +29,7 @@ import scala.util.{Failure, Success}
  * This iterator returns as its nextKey the key for the index. nextValue is
  * the value for the INDEX, mapped into a SimpleFeature
  */
+@deprecated
 class AttributeIndexIterator
     extends GeomesaFilteringIterator
     with HasFeatureType
@@ -62,7 +56,7 @@ class AttributeIndexIterator
     initFeatureType(options)
     init(featureType, options)
 
-    attributeRowPrefix = index.getTableSharingPrefix(featureType)
+    attributeRowPrefix = featureType.getTableSharingPrefix
     // if we're retrieving the attribute, we need the class in order to decode it
     attributeType = Option(options.get(GEOMESA_ITERATORS_ATTRIBUTE_NAME))
         .flatMap(n => Option(featureType.getDescriptor(n))).orNull
@@ -158,7 +152,7 @@ class AttributeIndexIterator
    */
   def setAttributeFromRow(key: Key, sf: SimpleFeature) = {
     val row = key.getRow.toString
-    val decoded = decodeAttributeIndexRow(attributeRowPrefix, attributeType, row)
+    val decoded = AttributeTableV5.decodeAttributeIndexRow(attributeRowPrefix, attributeType, row)
     decoded match {
       case Success(att) => sf.setAttribute(att.attributeName, att.attributeValue)
       case Failure(e)   => logger.error(s"Error decoding attribute row: row: $row, error: ${e.toString}")

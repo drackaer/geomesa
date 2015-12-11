@@ -1,34 +1,23 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 
 package org.locationtech.geomesa.accumulo.data
 
 import java.io.Serializable
-import java.util.{Map => JMap}
+import java.util.{Map => JMap, Collections}
 
 import org.apache.accumulo.core.client.mock.{MockConnector, MockInstance}
 import org.apache.accumulo.core.client.security.tokens.{AuthenticationToken, PasswordToken}
 import org.apache.accumulo.core.client.{Connector, ZooKeeperInstance}
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.mapreduce.Job
 import org.geotools.data.DataAccessFactory.Param
-import org.geotools.data.DataStoreFactorySpi
+import org.geotools.data.{Parameter, DataStoreFactorySpi}
 import org.locationtech.geomesa.accumulo.stats.StatWriter
-import org.locationtech.geomesa.features.SerializationType
 import org.locationtech.geomesa.security
 
 import scala.collection.JavaConversions._
@@ -79,10 +68,6 @@ class AccumuloDataStoreFactory extends DataStoreFactorySpi {
 
     val authorizationsProvider = security.getAuthorizationsProvider(params, auths)
 
-    val featureEncoding = featureEncParam.lookupOpt[String](params)
-      .map(SerializationType.withName)
-      .getOrElse(DEFAULT_ENCODING)
-
     // stats defaults to true if not specified
     val collectStats = !useMock &&
         Option(statsParam.lookUp(params)).map(_.toString.toBoolean).forall(_ == true)
@@ -95,28 +80,28 @@ class AccumuloDataStoreFactory extends DataStoreFactorySpi {
         tableName,
         authorizationsProvider,
         visibility,
+        queryTimeoutParam.lookupOpt[Int](params).map(i => i * 1000L),
         queryThreadsParam.lookupOpt(params),
         recordThreadsParam.lookupOpt(params),
         writeThreadsParam.lookupOpt(params),
-        caching,
-        featureEncoding) with StatWriter
+        caching) with StatWriter
     } else {
       new AccumuloDataStore(connector,
         token,
         tableName,
         authorizationsProvider,
         visibility,
+        queryTimeoutParam.lookupOpt[Int](params).map(i => i * 1000L),
         queryThreadsParam.lookupOpt(params),
         recordThreadsParam.lookupOpt(params),
         writeThreadsParam.lookupOpt(params),
-        caching,
-        featureEncoding)
+        caching)
     }
   }
 
-  override def getDisplayName = "Accumulo (GeoMesa)"
+  override def getDisplayName = AccumuloDataStoreFactory.DISPLAY_NAME
 
-  override def getDescription = "Apache Accumulo\u2122 distributed key/value store"
+  override def getDescription = AccumuloDataStoreFactory.DESCRIPTION
 
   override def getParametersInfo =
     Array(
@@ -128,7 +113,11 @@ class AccumuloDataStoreFactory extends DataStoreFactorySpi {
       visibilityParam,
       tableNameParam,
       statsParam,
-      cachingParam
+      cachingParam,
+      queryTimeoutParam,
+      queryThreadsParam,
+      recordThreadsParam,
+      writeThreadsParam
     )
 
   def canProcess(params: JMap[String,Serializable]) = AccumuloDataStoreFactory.canProcess(params)
@@ -139,7 +128,11 @@ class AccumuloDataStoreFactory extends DataStoreFactorySpi {
 }
 
 object AccumuloDataStoreFactory {
+
   import org.locationtech.geomesa.accumulo.data.AccumuloDataStoreFactory.params._
+
+  val DISPLAY_NAME = "Accumulo (GeoMesa)"
+  val DESCRIPTION = "Apache Accumulo\u2122 distributed key/value store"
 
   implicit class RichParam(val p: Param) {
     def lookupOpt[A](params: JMap[String, Serializable]) =
@@ -147,21 +140,21 @@ object AccumuloDataStoreFactory {
   }
 
   object params {
-    val connParam           = new Param("connector", classOf[Connector], "The Accumulo connector", false)
-    val instanceIdParam     = new Param("instanceId", classOf[String], "The Accumulo Instance ID", true)
+    val connParam           = new Param("connector", classOf[Connector], "Accumulo connector", false)
+    val instanceIdParam     = new Param("instanceId", classOf[String], "Accumulo Instance ID", true)
     val zookeepersParam     = new Param("zookeepers", classOf[String], "Zookeepers", true)
     val userParam           = new Param("user", classOf[String], "Accumulo user", true)
-    val passwordParam       = new Param("password", classOf[String], "Password", true)
+    val passwordParam       = new Param("password", classOf[String], "Accumulo password", true, null, Collections.singletonMap(Parameter.IS_PASSWORD, java.lang.Boolean.TRUE))
     val authsParam          = org.locationtech.geomesa.security.authsParam
     val visibilityParam     = new Param("visibilities", classOf[String], "Accumulo visibilities to apply to all written data", false)
-    val tableNameParam      = new Param("tableName", classOf[String], "The Accumulo Table Name", true)
+    val tableNameParam      = new Param("tableName", classOf[String], "Accumulo catalog table name", true)
+    val queryTimeoutParam   = new Param("queryTimeout", classOf[Integer], "The max time a query will be allowed to run before being killed, in seconds", false)
     val queryThreadsParam   = new Param("queryThreads", classOf[Integer], "The number of threads to use per query", false)
     val recordThreadsParam  = new Param("recordThreads", classOf[Integer], "The number of threads to use for record retrieval", false)
     val writeThreadsParam   = new Param("writeThreads", classOf[Integer], "The number of threads to use for writing records", false)
     val statsParam          = new Param("collectStats", classOf[java.lang.Boolean], "Toggle collection of statistics", false)
     val cachingParam        = new Param("caching", classOf[java.lang.Boolean], "Toggle caching of results", false)
     val mockParam           = new Param("useMock", classOf[String], "Use a mock connection (for testing)", false)
-    val featureEncParam     = new Param("featureEncoding", classOf[String], "The feature encoding format (kryo, avro or text). Default is Kryo", false, "kryo")
   }
 
   def buildAccumuloConnector(params: JMap[String,Serializable], useMock: Boolean): (Connector, AuthenticationToken) = {
@@ -189,29 +182,4 @@ object AccumuloDataStoreFactory {
 
   def canProcess(params: JMap[String,Serializable]): Boolean =
     params.containsKey(instanceIdParam.key) || params.containsKey(connParam.key)
-
-  def configureJob(job: Job, params: JMap[String, Serializable]): Job = {
-    val conf = job.getConfiguration
-
-    conf.set(ZOOKEEPERS, zookeepersParam.lookUp(params).asInstanceOf[String])
-    conf.set(INSTANCE_ID, instanceIdParam.lookUp(params).asInstanceOf[String])
-    conf.set(ACCUMULO_USER, userParam.lookUp(params).asInstanceOf[String])
-    conf.set(ACCUMULO_PASS, passwordParam.lookUp(params).asInstanceOf[String])
-    conf.set(TABLE, tableNameParam.lookUp(params).asInstanceOf[String])
-    authsParam.lookupOpt[String](params).foreach(ap => conf.set(AUTHS, ap))
-    visibilityParam.lookupOpt[String](params).foreach(vis => conf.set(VISIBILITY, vis))
-    featureEncParam.lookupOpt[String](params).foreach(fep => conf.set(FEATURE_ENCODING, fep))
-
-    job
-  }
-
-  def getMRAccumuloConnectionParams(conf: Configuration): JMap[String, AnyRef] =
-    Map(zookeepersParam.key   -> conf.get(ZOOKEEPERS),
-      instanceIdParam.key     -> conf.get(INSTANCE_ID),
-      userParam.key           -> conf.get(ACCUMULO_USER),
-      passwordParam.key       -> conf.get(ACCUMULO_PASS),
-      tableNameParam.key      -> conf.get(TABLE),
-      authsParam.key          -> conf.get(AUTHS),
-      visibilityParam.key     -> conf.get(VISIBILITY),
-      featureEncParam.key     -> conf.get(FEATURE_ENCODING))
 }

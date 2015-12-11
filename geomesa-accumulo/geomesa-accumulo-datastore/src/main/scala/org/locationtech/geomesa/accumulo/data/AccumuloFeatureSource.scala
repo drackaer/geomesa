@@ -1,29 +1,25 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.data
+
+import java.util.concurrent.atomic.AtomicBoolean
 
 import com.google.common.cache.{CacheBuilder, CacheLoader}
 import com.typesafe.scalalogging.slf4j.Logging
 import org.geotools.data._
-import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureIterator, SimpleFeatureSource}
+import org.geotools.data.simple.{SimpleFeatureCollection, SimpleFeatureIterator}
+import org.geotools.data.store.DataFeatureCollection
 import org.geotools.feature.collection.SortedSimpleFeatureCollection
 import org.geotools.feature.visitor.{BoundsVisitor, MaxVisitor, MinVisitor}
-import org.locationtech.geomesa.accumulo.index.QueryHints._
-import org.locationtech.geomesa.accumulo.iterators.TemporalDensityIterator.createFeatureType
+import org.locationtech.geomesa.accumulo.GeomesaSystemProperties
+import org.locationtech.geomesa.accumulo.index.QueryHints.{RichHints, _}
+import org.locationtech.geomesa.accumulo.index.QueryPlanner
 import org.locationtech.geomesa.accumulo.process.knn.KNNVisitor
 import org.locationtech.geomesa.accumulo.process.proximity.ProximityVisitor
 import org.locationtech.geomesa.accumulo.process.query.QueryVisitor
@@ -31,10 +27,12 @@ import org.locationtech.geomesa.accumulo.process.temporalDensity.TemporalDensity
 import org.locationtech.geomesa.accumulo.process.tube.TubeVisitor
 import org.locationtech.geomesa.accumulo.process.unique.AttributeVisitor
 import org.locationtech.geomesa.accumulo.util.TryLoggingFailure
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.opengis.feature.FeatureVisitor
 import org.opengis.feature.`type`.Name
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
+import org.opengis.filter.expression.{Expression, PropertyName}
 import org.opengis.filter.sort.SortBy
 import org.opengis.util.ProgressListener
 
@@ -65,8 +63,11 @@ trait AccumuloAbstractFeatureSource extends AbstractFeatureSource with Logging w
   //  First, one can set the System property "geomesa.force.count".
   //  Second, there is an EXACT_COUNT query hint.
   override def getCount(query: Query) = {
-    val exactCount = query.getHints.get(EXACT_COUNT) == java.lang.Boolean.TRUE ||
-                     System.getProperty("geomesa.force.count") == "true"
+    val exactCount = if(query.getHints.get(EXACT_COUNT) != null) {
+      query.getHints.get(EXACT_COUNT).asInstanceOf[Boolean]
+    } else {
+      GeomesaSystemProperties.QueryProperties.QUERY_EXACT_COUNT.get.toBoolean
+    }
 
     if (exactCount || longCount == -1) {
       getFeaturesNoCache(query).features().size
@@ -78,18 +79,15 @@ trait AccumuloAbstractFeatureSource extends AbstractFeatureSource with Logging w
     }
   }
 
-  override def getQueryCapabilities =
-    new QueryCapabilities() {
-      override def isOffsetSupported = false
-      override def isReliableFIDSupported = true
-      override def isUseProvidedFIDSupported = true
-      override def supportsSorting(sortAttributes: Array[SortBy]) = true
-    }
-
-  protected def getFeaturesNoCache(query: Query): SimpleFeatureCollection = {
-    org.locationtech.geomesa.accumulo.index.setQueryTransforms(query, getSchema)
-    new AccumuloFeatureCollection(self, query)
+  override def getQueryCapabilities = new QueryCapabilities() {
+    override def isOffsetSupported = false
+    override def isReliableFIDSupported = true
+    override def isUseProvidedFIDSupported = true
+    override def supportsSorting(sortAttributes: Array[SortBy]) = true
   }
+
+  protected def getFeaturesNoCache(query: Query): SimpleFeatureCollection =
+    new AccumuloFeatureCollection(self, query)
 
   override def getFeatures(query: Query): SimpleFeatureCollection =
     tryLoggingFailures(getFeaturesNoCache(query))
@@ -101,23 +99,38 @@ trait AccumuloAbstractFeatureSource extends AbstractFeatureSource with Logging w
 class AccumuloFeatureSource(val dataStore: AccumuloDataStore, val featureName: Name)
   extends AccumuloAbstractFeatureSource
 
-class AccumuloFeatureCollection(source: SimpleFeatureSource, query: Query)
-  extends DefaultFeatureResults(source, query) {
+/**
+ * Feature collection implementation
+ */
+class AccumuloFeatureCollection(source: AccumuloAbstractFeatureSource, query: Query)
+  extends DataFeatureCollection {
 
-  val ds  = source.getDataStore.asInstanceOf[AccumuloDataStore]
+  private val ds = source.getDataStore
+  private val open = new AtomicBoolean(false)
 
-  override def getSchema: SimpleFeatureType =
-    if (query.getHints.containsKey(TEMPORAL_DENSITY_KEY)) {
-      createFeatureType(source.getSchema())
-    } else {
-      org.locationtech.geomesa.accumulo.index.getTransformSchema(query).getOrElse(super.getSchema)
+  override def getSchema: SimpleFeatureType = {
+    if (!open.get()) {
+      // once opened the query will already be configured by the query planner,
+      // otherwise we have to compute it here
+      QueryPlanner.configureQuery(query, source.getSchema)
     }
+    query.getHints.getReturnSft
+  }
 
-  override def accepts(visitor: FeatureVisitor, progress: ProgressListener) =
+  override def openIterator(): java.util.Iterator[SimpleFeature] = {
+    val iter = super.openIterator()
+    open.set(true)
+    iter
+  }
+
+  override def accepts(visitor: FeatureVisitor, progress: ProgressListener): Unit =
     visitor match {
       // TODO GEOMESA-421 implement min/max iterators
-      case v: MinVisitor             => v.setValue(ds.getTimeBounds(query.getTypeName).getStart.toDate)
-      case v: MaxVisitor             => v.setValue(ds.getTimeBounds(query.getTypeName).getEnd.toDate)
+      case v: MinVisitor if isTime(v.getExpression) =>
+        v.setValue(ds.getTimeBounds(query.getTypeName).getStart.toDate)
+      case v: MaxVisitor if isTime(v.getExpression) =>
+        v.setValue(ds.getTimeBounds(query.getTypeName).getEnd.toDate)
+
       case v: BoundsVisitor          => v.reset(ds.getBounds(query))
       case v: TubeVisitor            => v.setValue(v.tubeSelect(source, query))
       case v: ProximityVisitor       => v.setValue(v.proximitySearch(source, query))
@@ -128,10 +141,27 @@ class AccumuloFeatureCollection(source: SimpleFeatureSource, query: Query)
       case _                         => super.accepts(visitor, progress)
     }
 
-  override def reader(): FeatureReader[SimpleFeatureType, SimpleFeature] = super.reader()
+  private def isTime(e: Expression) = e match {
+    case p: PropertyName => getSchema.getDtgField.exists(_ == p.getPropertyName)
+    case _ => false
+  }
+
+  override def reader(): FeatureReader[SimpleFeatureType, SimpleFeature] = {
+    val reader = ds.getFeatureReader(query.getTypeName, query)
+    val maxFeatures = query.getMaxFeatures
+    if (maxFeatures != Integer.MAX_VALUE) {
+      new MaxFeatureReader[SimpleFeatureType, SimpleFeature](reader, maxFeatures)
+    } else {
+      reader
+    }
+  }
+
+  override def getCount = source.getCount(query)
+
+  override def getBounds = source.getBounds(query)
 }
 
-class CachingAccumuloFeatureCollection(source: SimpleFeatureSource, query: Query)
+class CachingAccumuloFeatureCollection(source: AccumuloAbstractFeatureSource, query: Query)
     extends AccumuloFeatureCollection(source, query) {
 
   lazy val featureList = {
@@ -149,8 +179,8 @@ class CachingAccumuloFeatureCollection(source: SimpleFeatureSource, query: Query
   override def features = new SimpleFeatureIterator() {
     private val iter = featureList.iterator
     override def hasNext = iter.hasNext
-    override def next = iter.next
-    override def close = {}
+    override def next = iter.next()
+    override def close() = {}
   }
 
   override def size = featureList.length

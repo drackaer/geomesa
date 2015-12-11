@@ -1,22 +1,13 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
-import org.apache.accumulo.core.data.{Range => AccRange}
 import org.geotools.data._
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
@@ -45,11 +36,13 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
     }
   })
 
+  val joinIndicator = "Join Plan:"
+
   "AttributeIndexStrategy" should {
 
     "support full coverage of attributes" in {
       val query = new Query(sftName, ECQL.toFilter("name = '3name3'"))
-      explain(query).indexOf("Using record join iterator") mustEqual(-1)
+      explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -63,7 +56,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
 
     "support transforms in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name = '3name3'"), Array("name", "age", "dtg", "geom"))
-      explain(query).indexOf("Using record join iterator") mustEqual(-1)
+      explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -77,7 +70,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
 
     "support ecql filters in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name >= '3name3' AND height = '9.0'"))
-      explain(query).indexOf("Using record join iterator") mustEqual(-1)
+      explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -92,7 +85,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
     "support ecql filters and covering transforms in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name >= '3name3' AND height = '9.0'"),
         Array("name", "height", "dtg", "geom"))
-      explain(query).indexOf("Using record join iterator") mustEqual(-1)
+      explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -107,7 +100,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
     "support ecql filters and non-covering transforms in fully covered indices" in {
       val query = new Query(sftName, ECQL.toFilter("name >= '3name3' AND height = '9.0'"),
         Array("name", "age", "dtg", "geom"))
-      explain(query).indexOf("Using record join iterator") mustEqual(-1)
+      explain(query).indexOf(joinIndicator) mustEqual(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -121,7 +114,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
 
     "support join coverage of attributes" in {
       val query = new Query(sftName, ECQL.toFilter("age = '5'"))
-      explain(query).indexOf("Using record join iterator") must beGreaterThan(-1)
+      explain(query).indexOf(joinIndicator) must beGreaterThan(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 
@@ -135,7 +128,7 @@ class CoveringAttributeIndexTest extends Specification with TestWithDataStore {
 
     "be backwards compatible with index spec" in {
       val query = new Query(sftName, ECQL.toFilter("weight = '4.0'"))
-      explain(query).indexOf("Using record join iterator") must beGreaterThan(-1)
+      explain(query).indexOf(joinIndicator) must beGreaterThan(-1)
 
       val features = SelfClosingIterator(ds.getFeatureSource(sftName).getFeatures(query).features()).toList
 

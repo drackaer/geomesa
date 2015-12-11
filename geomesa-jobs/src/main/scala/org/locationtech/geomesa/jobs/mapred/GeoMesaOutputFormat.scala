@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.mapred
 
@@ -27,13 +19,12 @@ import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred._
 import org.apache.hadoop.util.Progressable
 import org.geotools.data.DataStoreFinder
-import org.locationtech.geomesa.accumulo
 import org.locationtech.geomesa.accumulo.data.AccumuloFeatureWriter.{FeatureToMutations, FeatureToWrite}
 import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreFactory, AccumuloFeatureWriter}
 import org.locationtech.geomesa.accumulo.index.IndexValueEncoder
 import org.locationtech.geomesa.features.{SimpleFeatureSerializer, SimpleFeatureSerializers}
 import org.locationtech.geomesa.jobs.GeoMesaConfigurator
-import org.opengis.feature.simple.SimpleFeature
+import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.collection.JavaConversions._
 
@@ -51,7 +42,7 @@ object GeoMesaOutputFormat {
     // set up the underlying accumulo input format
     val user = AccumuloDataStoreFactory.params.userParam.lookUp(dsParams).asInstanceOf[String]
     val password = AccumuloDataStoreFactory.params.passwordParam.lookUp(dsParams).asInstanceOf[String]
-    AccumuloOutputFormat.setConnectorInfo(job, user, new PasswordToken(password.getBytes()))
+    AccumuloOutputFormat.setConnectorInfo(job, user, new PasswordToken(password.getBytes))
 
     val instance = AccumuloDataStoreFactory.params.instanceIdParam.lookUp(dsParams).asInstanceOf[String]
     val zookeepers = AccumuloDataStoreFactory.params.zookeepersParam.lookUp(dsParams).asInstanceOf[String]
@@ -104,36 +95,34 @@ class GeoMesaRecordWriter(params: Map[String, String], delegate: RecordWriter[Te
 
   val ds = DataStoreFinder.getDataStore(params).asInstanceOf[AccumuloDataStore]
 
-  val sftCache          = scala.collection.mutable.HashSet.empty[String]
+  val sftCache          = scala.collection.mutable.Map.empty[String, SimpleFeatureType]
   val writerCache       = scala.collection.mutable.Map.empty[String, Seq[TableAndMutations]]
   val encoderCache      = scala.collection.mutable.Map.empty[String, SimpleFeatureSerializer]
   val indexEncoderCache = scala.collection.mutable.Map.empty[String, IndexValueEncoder]
 
   override def write(key: Text, value: SimpleFeature) = {
-    val sft = value.getFeatureType
-    val sftName = sft.getTypeName
+    val sftName = value.getFeatureType.getTypeName
 
     // ensure that the type has been created if we haven't seen it before
-    if (sftCache.add(sftName)) {
-      // this is a no-op if schema is already created, and should be thread-safe from different mappers
+    val sft = sftCache.getOrElseUpdate(sftName, {
+      // this is a no-op if schema is already created, and is thread-safe from different mappers
       ds.createSchema(value.getFeatureType)
       // short sleep to ensure that feature type is fully written if it is happening in some other thread
       Thread.sleep(5000)
-    }
+      // load the sft from the data store to ensure all user-data gets set appropriately
+      ds.getSchema(sftName)
+    })
 
     val writers = writerCache.getOrElseUpdate(sftName, {
-      if (sft.getUserData.get(accumulo.index.SFT_INDEX_SCHEMA) == null) {
-        // needed for st writer
-        sft.getUserData.put(accumulo.index.SFT_INDEX_SCHEMA, ds.getIndexSchemaFmt(sft.getTypeName))
-      }
       AccumuloFeatureWriter.getTablesAndWriters(sft, ds).map {
         case (table, writer) => (new Text(table), writer)
       }
     })
 
+    val withFid = AccumuloFeatureWriter.featureWithFid(sft, value)
     val encoder = encoderCache.getOrElseUpdate(sftName, SimpleFeatureSerializers(sft, ds.getFeatureEncoding(sft)))
-    val ive = indexEncoderCache.getOrElseUpdate(sftName, IndexValueEncoder(sft, ds.getGeomesaVersion(sft)))
-    val featureToWrite = new FeatureToWrite(value, ds.writeVisibilities, encoder, ive)
+    val ive = indexEncoderCache.getOrElseUpdate(sftName, IndexValueEncoder(sft))
+    val featureToWrite = new FeatureToWrite(withFid, ds.writeVisibilities, encoder, ive)
 
     writers.foreach { case (table, featureToMutations) =>
       featureToMutations(featureToWrite).foreach(delegate.write(table, _))

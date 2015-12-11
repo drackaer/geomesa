@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.convert.text
 
@@ -22,9 +14,9 @@ import java.util.concurrent.Executors
 import com.google.common.collect.Queues
 import com.typesafe.config.Config
 import org.apache.commons.csv.{CSVFormat, QuoteMode}
-import org.locationtech.geomesa.convert.Transformers.Expr
+import org.locationtech.geomesa.convert.Transformers.{EvaluationContext, DefaultCounter, Counter, Expr}
 import org.locationtech.geomesa.convert.{Field, SimpleFeatureConverterFactory, ToSimpleFeatureConverter}
-import org.opengis.feature.simple.SimpleFeatureType
+import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.collection.JavaConversions._
 
@@ -37,29 +29,41 @@ class DelimitedTextConverterFactory extends SimpleFeatureConverterFactory[String
   val QUOTED_WITH_QUOTE_ESCAPE  = QUOTE_ESCAPE.withQuoteMode(QuoteMode.ALL)
 
   def buildConverter(targetSFT: SimpleFeatureType, conf: Config): DelimitedTextConverter = {
-    val format    = conf.getString("format") match {
-      case "DEFAULT"                  => CSVFormat.DEFAULT
+    val baseFmt = conf.getString("format").toUpperCase match {
+      case "CSV" | "DEFAULT"          => CSVFormat.DEFAULT
       case "EXCEL"                    => CSVFormat.EXCEL
       case "MYSQL"                    => CSVFormat.MYSQL
-      case "TDF"                      => CSVFormat.TDF
+      case "TDF" | "TSV" | "TAB"      => CSVFormat.TDF
       case "RFC4180"                  => CSVFormat.RFC4180
       case "QUOTED"                   => QUOTED
       case "QUOTE_ESCAPE"             => QUOTE_ESCAPE
       case "QUOTED_WITH_QUOTE_ESCAPE" => QUOTED_WITH_QUOTE_ESCAPE
       case _ => throw new IllegalArgumentException("Unknown delimited text format")
     }
+
+    val opts = {
+      import org.locationtech.geomesa.utils.conf.ConfConversions._
+      val o = "options"
+      var dOpts = new DelimitedOptions()
+      dOpts = conf.getIntOpt(s"$o.skip-lines").map(s => dOpts.copy(skipLines = s)).getOrElse(dOpts)
+      dOpts = conf.getIntOpt(s"$o.pipe-size").map(p => dOpts.copy(pipeSize = p)).getOrElse(dOpts)
+      dOpts
+    }
+
     val fields    = buildFields(conf.getConfigList("fields"))
     val idBuilder = buildIdBuilder(conf.getString("id-field"))
-    val pipeSize  = if(conf.hasPath("pipe-size")) conf.getInt("pipe-size") else 16*1024
-    new DelimitedTextConverter(format, targetSFT, idBuilder, fields, pipeSize)
+    new DelimitedTextConverter(baseFmt, targetSFT, idBuilder, fields, opts)
   }
 }
+
+case class DelimitedOptions(skipLines: Int = 0,
+                            pipeSize: Int = 16*1024)
 
 class DelimitedTextConverter(format: CSVFormat,
                              val targetSFT: SimpleFeatureType,
                              val idBuilder: Expr,
                              val inputFields: IndexedSeq[Field],
-                             val inputSize: Int = 16*1024)
+                             val options: DelimitedOptions)
   extends ToSimpleFeatureConverter[String] {
 
   var curString: String = null
@@ -69,7 +73,7 @@ class DelimitedTextConverter(format: CSVFormat,
   // For this reason, we have to separate the reading and writing into two
   // threads
   val writer = new PipedWriter()
-  val reader = new PipedReader(writer, inputSize) // 16k records
+  val reader = new PipedReader(writer, options.pipeSize)  // record size
   val parser = format.parse(reader).iterator()
   val separator = format.getRecordSeparator
 
@@ -78,7 +82,9 @@ class DelimitedTextConverter(format: CSVFormat,
     override def run(): Unit = {
       while (true) {
         val s = q.take()
-        if(s != null) {
+
+        // make sure the input is not null and is nonempty...if it is empty the threads will deadlock
+        if (s != null && s.nonEmpty) {
           writer.write(s)
           writer.write(separator)
           writer.flush()
@@ -87,9 +93,11 @@ class DelimitedTextConverter(format: CSVFormat,
     }
   })
 
-  def fromInputType(string: String): Array[Any] = {
+  override def fromInputType(string: String): Seq[Array[Any]] = {
     import spire.syntax.cfor._
 
+    // empty strings cause deadlock
+    if (string == null || string.isEmpty) throw new IllegalArgumentException("Invalid input (empty)")
     q.put(string)
     val rec = parser.next()
     val len = rec.size()
@@ -98,12 +106,20 @@ class DelimitedTextConverter(format: CSVFormat,
     cfor(0)(_ < len, _ + 1) { i =>
       ret(i+1) = rec.get(i)
     }
-    ret
+    Seq(ret)
   }
+
+  private var skipLines = options.skipLines
+  override def preProcess(i: String)(implicit ec: EvaluationContext): Option[String] =
+    if (skipLines > 0) {
+      skipLines -= 1
+      None
+    } else Some(i)
 
   override def close(): Unit = {
     es.shutdownNow()
     writer.close()
     reader.close()
   }
+
 }

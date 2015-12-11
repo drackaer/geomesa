@@ -1,25 +1,19 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.analytics
 
 import com.twitter.algebird.Aggregator
 import com.twitter.scalding._
 import com.twitter.scalding.typed.UnsortedGrouped
+import org.apache.accumulo.core.data.Mutation
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.io.Text
 import org.geotools.data.DataStoreFinder
 import org.locationtech.geomesa.accumulo.data._
 import org.locationtech.geomesa.jobs.GeoMesaBaseJob
@@ -30,7 +24,6 @@ import org.locationtech.geomesa.jobs.scalding._
 import org.opengis.feature.simple.SimpleFeature
 
 import scala.collection.JavaConversions._
-import scala.collection.JavaConverters._
 import scala.math.Ordering
 
 /**
@@ -47,14 +40,18 @@ class HistogramJob(args: Args) extends GeoMesaBaseJob(args) {
   val groupBy    = args.nonStrictList(GROUP_BY)
   val uniqueBy   = args.nonStrictList(UNIQUE_BY)
   val transforms = Option(args.list(TRANSFORM_IN).toArray).filter(_.nonEmpty)
+  val writeToAccumulo  = args.boolean(WRITE_TO_ACCUMULO)
 
   val input = GeoMesaInputOptions(dsParams, feature, filter, transforms)
+  lazy val dsParamsAccOutput = dsParams.updated("tableName", s"${dsParams.get("tableName").get}_stats")
+  lazy val accOutput = AccumuloOutputOptions(dsParamsAccOutput)
+
   val output = args(FILE_OUT)
 
   // TODO we could look up attribute values by index for performance gain
   // verify input params - inside a block so they don't get serialized
   {
-    val ds = DataStoreFinder.getDataStore(dsParams.asJava).asInstanceOf[AccumuloDataStore]
+    val ds = DataStoreFinder.getDataStore(dsParams).asInstanceOf[AccumuloDataStore]
     val sft = ds.getSchema(feature)
     assert(sft != null, s"The feature '$feature' does not exist in the input data store")
     val descriptors = sft.getAttributeDescriptors.map(_.getLocalName)
@@ -96,16 +93,26 @@ class HistogramJob(args: Args) extends GeoMesaBaseJob(args) {
   val aggregates: UnsortedGrouped[Product, Long] = groups.aggregate(Aggregator.size)
 
   // write out the histogram to a tsv file - we create the tabs ourselves since length isn't known
-  aggregates.toTypedPipe.map { case (group, count) => s"${group.productIterator.mkString("\t")}\t$count" }
+  if (writeToAccumulo) {
+    aggregates.toTypedPipe
+      .map{ case (group, count) =>
+      val mut = new Mutation(new Text(s"$feature~$attribute~${group.productElement(group.productArity - 1).toString}"))
+      mut.put(new Text(s"${group.productIterator.mkString("\t")}"), new Text(count.toString.getBytes), EMPTY_VALUE)
+      (null: Text, mut)
+    }.write(AccumuloSource(accOutput))
+  } else {
+    aggregates.toTypedPipe.map { case (group, count) => s"${group.productIterator.mkString("\t")}\t$count" }
       .write(TypedTsv[String](output))
+  }
 }
 
 object HistogramJob {
 
-  val ATTRIBUTE   = "geomesa.hist.attribute"
-  val GROUP_BY    = "geomesa.hist.group.attributes"
-  val UNIQUE_BY   = "geomesa.hist.unique.attributes"
-  val FILE_OUT    = "geomesa.hist.file.out"
+  val ATTRIBUTE         = "geomesa.hist.attribute"
+  val GROUP_BY          = "geomesa.hist.group.attributes"
+  val UNIQUE_BY         = "geomesa.hist.unique.attributes"
+  val FILE_OUT          = "geomesa.hist.file.out"
+  val WRITE_TO_ACCUMULO = "geomesa.hist.write.to.accumulo"
 
   implicit class RichList[A <: Object](val l: List[A]) extends AnyVal {
 
@@ -150,12 +157,16 @@ object HistogramJob {
              dsParams: Map[String, String],
              feature: String,
              attribute: String,
-             groupBy: List[String] = List.empty,
-             uniqueBy: List[String] = List.empty) = {
-    val args = Seq(FEATURE_IN -> List(feature),
-                   ATTRIBUTE  -> List(attribute),
-                   GROUP_BY   -> groupBy,
-                   UNIQUE_BY  -> uniqueBy).toMap ++ toInArgs(dsParams)
+             fileOut: String,
+             groupBy: List[String]    = List.empty,
+             uniqueBy: List[String]   = List.empty,
+             writeToAccumulo: Boolean = false) = {
+    val args = Seq(FEATURE_IN        -> List(feature),
+                   ATTRIBUTE         -> List(attribute),
+                   GROUP_BY          -> groupBy,
+                   UNIQUE_BY         -> uniqueBy,
+                   FILE_OUT          -> List(fileOut),
+                   WRITE_TO_ACCUMULO -> List(writeToAccumulo.toString)).toMap ++ toInArgs(dsParams)
     val instantiateJob = (args: Args) => new HistogramJob(args)
     GeoMesaBaseJob.runJob(conf, args, instantiateJob)
   }
