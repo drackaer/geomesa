@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.data
 
@@ -25,6 +17,7 @@ import org.geotools.data.DataStoreFinder
 import org.geotools.data.simple.SimpleFeatureSource
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.accumulo.data.tables.{RecordTable, SpatioTemporalTable}
 import org.locationtech.geomesa.accumulo.iterators.TestData
 import org.locationtech.geomesa.accumulo.iterators.TestData._
 import org.opengis.filter._
@@ -75,7 +68,6 @@ class TableSharingTest extends Specification with Logging {
   // Check the sft's indexschema
 
   val retrievedSFT1 = ds.getSchema(sft1.getTypeName)
-  val sft1Schema = org.locationtech.geomesa.accumulo.index.getIndexSchema(retrievedSFT1)
 
   val list2: util.SortedSet[String] = c.tableOperations().list
 
@@ -124,8 +116,8 @@ class TableSharingTest extends Specification with Logging {
 
   // Delete one shared table feature to ensure that deleteSchema works.
   s"Removing ${sft2.getTypeName}" should {
-    val sft2Scanner = ds.getScanner(ds.getSpatioTemporalTable(sft2))
-    val sft2RecordScanner = ds.getScanner(ds.getRecordTable(sft2))
+    val sft2Scanner = ds.getScanner(ds.getTableName(sft2.getTypeName, SpatioTemporalTable))
+    val sft2RecordScanner = ds.getScanner(ds.getTableName(sft2.getTypeName, RecordTable))
 
     ds.removeSchema(sft2.getTypeName)
 

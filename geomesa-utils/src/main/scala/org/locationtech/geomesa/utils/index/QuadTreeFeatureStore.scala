@@ -1,38 +1,39 @@
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.utils.index
 
 import com.vividsolutions.jts.geom.Geometry
-import org.geotools.data.FeatureReader
-import org.geotools.data.collection.DelegateFeatureReader
-import org.geotools.data.store.FilteringFeatureIterator
-import org.geotools.feature.collection.DelegateFeatureIterator
 import org.geotools.geometry.jts.JTS
+import org.locationtech.geomesa.utils.geotools.{DFI, DFR, FR}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.expression.{Literal, PropertyName}
 import org.opengis.filter.spatial.{BBOX, BinarySpatialOperator, Within}
 
-trait QuadTreeFeatureStore {
-  type FR = FeatureReader[SimpleFeatureType, SimpleFeature]
-  type DFR = DelegateFeatureReader[SimpleFeatureType, SimpleFeature]
-  type DFI = DelegateFeatureIterator[SimpleFeature]
+import scala.collection.JavaConverters._
 
-  def qt: SynchronizedQuadtree
+trait QuadTreeFeatureStore {
+
+  def spatialIndex: SpatialIndex[SimpleFeature]
   def sft: SimpleFeatureType
 
   def within(w: Within): FR = {
     val (_, geomLit) = splitBinOp(w)
     val geom = geomLit.evaluate(null).asInstanceOf[Geometry]
-    val res = qt.query(geom.getEnvelopeInternal)
-    val fiter = new DFI(res.asInstanceOf[java.util.List[SimpleFeature]].iterator)
-    val filt = new FilteringFeatureIterator[SimpleFeature](fiter, w)
-    new DFR(sft, filt)
+    val res = spatialIndex.query(geom.getEnvelopeInternal, w.evaluate)
+    val fiter = new DFI(res.asJava)
+    new DFR(sft, fiter)
   }
 
   def bbox(b: BBOX): FR = {
     val bounds = JTS.toGeometry(b.getBounds)
-    val res = qt.query(bounds.getEnvelopeInternal)
-    val fiter = new DFI(res.asInstanceOf[java.util.List[SimpleFeature]].iterator)
-    val filt = new FilteringFeatureIterator[SimpleFeature](fiter, b)
-    new DFR(sft, filt)
+    val res = spatialIndex.query(bounds.getEnvelopeInternal, b.evaluate)
+    val fiter = new DFI(res.asJava)
+    new DFR(sft, fiter)
   }
 
   def splitBinOp(binop: BinarySpatialOperator): (PropertyName, Literal) =

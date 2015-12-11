@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 
 package org.locationtech.geomesa.filter.function
@@ -59,8 +51,8 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual baseDtg - 60 * 1000 * i
           decoded.lat mustEqual 45
           decoded.lon mustEqual 50 + i
-          decoded.trackId mustEqual Some(s"1234-$i").map(_.hashCode.toString)
-          decoded.asInstanceOf[ExtendedValues].label mustEqual Some(java.lang.Long.valueOf(i))
+          decoded.trackId mustEqual s"1234-$i".hashCode.toString
+          decoded.asInstanceOf[ExtendedValues].label mustEqual java.lang.Long.valueOf(i)
         }
         success
       }
@@ -75,7 +67,7 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual baseDtg - 60 * 1000 * i
           decoded.lat mustEqual 45
           decoded.lon mustEqual 50 + i
-          decoded.trackId mustEqual Some(s"1234-$i").map(_.hashCode.toString)
+          decoded.trackId mustEqual s"1234-$i".hashCode.toString
           decoded must beAnInstanceOf[BasicValues]
         }
         success
@@ -91,7 +83,7 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual baseDtg - 60 * 1000 * i
           decoded.lat mustEqual 45
           decoded.lon mustEqual 50 + i
-          decoded.trackId mustEqual Some(s"$i").map(_.hashCode.toString)
+          decoded.trackId mustEqual s"$i".hashCode.toString
           decoded must beAnInstanceOf[BasicValues]
         }
         success
@@ -107,7 +99,7 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual baseDtg - 60 * 1000 * i
           decoded.lat mustEqual 45 + i
           decoded.lon mustEqual 50
-          decoded.trackId mustEqual Some(s"1234-$i").map(_.hashCode.toString)
+          decoded.trackId mustEqual s"1234-$i".hashCode.toString
           decoded must beAnInstanceOf[BasicValues]
         }
         success
@@ -138,8 +130,8 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual dates(i).getTime
           decoded.lat mustEqual line.getCoordinates()(i).x.toFloat
           decoded.lon mustEqual line.getCoordinates()(i).y.toFloat
-          decoded.trackId mustEqual Some("1234-0").map(_.hashCode.toString)
-          decoded.asInstanceOf[ExtendedValues].label mustEqual Some(0)
+          decoded.trackId mustEqual "1234-0".hashCode.toString
+          decoded.asInstanceOf[ExtendedValues].label mustEqual 0
         }
         success
       }
@@ -154,7 +146,7 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual dates(i).getTime
           decoded.lat mustEqual line.getCoordinates()(i).x.toFloat
           decoded.lon mustEqual line.getCoordinates()(i).y.toFloat
-          decoded.trackId mustEqual Some("1234-0").map(_.hashCode.toString)
+          decoded.trackId mustEqual "1234-0".hashCode.toString
           decoded must beAnInstanceOf[BasicValues]
         }
         success
@@ -170,7 +162,7 @@ class BinaryOutputEncoderTest extends Specification {
           decoded.dtg mustEqual dates(3 - i).getTime
           decoded.lat mustEqual line.getCoordinates()(3 - i).x.toFloat
           decoded.lon mustEqual line.getCoordinates()(3 - i).y.toFloat
-          decoded.trackId mustEqual Some("1234-0").map(_.hashCode.toString)
+          decoded.trackId mustEqual "1234-0".hashCode.toString
           decoded must beAnInstanceOf[BasicValues]
         }
         success

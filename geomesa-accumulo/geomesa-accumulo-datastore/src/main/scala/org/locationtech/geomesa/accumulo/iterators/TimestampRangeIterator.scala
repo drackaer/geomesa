@@ -1,24 +1,15 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.accumulo.iterators
 
-import java.util.{Date, UUID, Map => JMap}
+import java.util.{Date, Map => JMap, UUID}
 
 import org.apache.accumulo.core.client.{IteratorSetting, ScannerBase}
-import org.apache.accumulo.core.client.mapreduce.InputFormatBase
 import org.apache.accumulo.core.data.{Key, Value}
 import org.apache.accumulo.core.iterators.{IteratorEnvironment, SkippingIterator, SortedKeyValueIterator}
 import org.apache.hadoop.mapreduce.Job
@@ -39,18 +30,6 @@ object TimestampRangeIterator {
 
   def setupIterator(scanner: ScannerBase, startTime: Date, endTime: Date) {
     setupIterator(scanner, startTime, endTime, defaultPriority)
-  }
-
-  def setupIterator(job: Job, startTime: Date, endTime: Date, priority: Int) {
-    val iteratorName: String = "tri-" + UUID.randomUUID.toString
-    val cfg = new IteratorSetting(priority, iteratorName, classOf[TimestampRangeIterator])
-    cfg.addOptions(Map(startOption -> (startTime.getTime / 1000).toString,
-                       endOption   -> (endTime.getTime / 1000).toString).asJava)
-    InputFormatBase.addIterator(job.getConfiguration, cfg)
-  }
-
-  def setupIterator(job: Job, startTime: Date, endTime: Date) {
-    setupIterator(job, startTime, endTime, defaultPriority)
   }
 
   var startOption: String = "startOption"

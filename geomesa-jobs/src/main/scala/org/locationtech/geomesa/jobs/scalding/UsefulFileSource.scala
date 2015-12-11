@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.scalding
 
@@ -21,7 +13,7 @@ import java.util.Properties
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
 
 import cascading.flow.FlowProcess
-import cascading.scheme.Scheme
+import cascading.scheme.{NullScheme, Scheme}
 import cascading.tap.local.FileTap
 import cascading.tap.{SinkMode, Tap}
 import cascading.tuple.{TupleEntryCollector, TupleEntryIterator}
@@ -29,6 +21,7 @@ import com.twitter.scalding._
 import org.apache.commons.compress.compressors.bzip2.{BZip2CompressorInputStream, BZip2CompressorOutputStream, BZip2Utils}
 import org.apache.commons.compress.compressors.gzip.GzipUtils
 import org.apache.commons.compress.compressors.xz.{XZCompressorInputStream, XZCompressorOutputStream, XZUtils}
+import org.apache.hadoop.mapred.{OutputCollector, RecordReader, JobConf}
 import org.locationtech.geomesa.jobs.scalding.UsefulFileTap._
 
 class UsefulFileSource(path: String*) extends FixedPathSource(path: _*) {

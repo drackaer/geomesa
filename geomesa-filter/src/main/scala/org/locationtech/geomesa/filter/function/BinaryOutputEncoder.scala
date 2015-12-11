@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.filter.function
 
@@ -34,7 +26,7 @@ object BinaryOutputEncoder extends Logging {
   import org.locationtech.geomesa.filter.function.AxisOrder._
   import org.locationtech.geomesa.utils.geotools.Conversions._
 
-  case class ValuesToEncode(lat: Float, lon: Float, dtg: Long, track: Option[String], label: Option[Long])
+  case class ValuesToEncode(lat: Float, lon: Float, dtg: Long, track: String, label: Option[Long])
 
   implicit val ordering = new Ordering[ValuesToEncode]() {
     override def compare(x: ValuesToEncode, y: ValuesToEncode) = x.dtg.compareTo(y.dtg)
@@ -136,14 +128,19 @@ object BinaryOutputEncoder extends Logging {
     }
 
     // gets the track id from a feature
-    val getTrackId: (SimpleFeature) => Option[String] = trackIdField match {
-      case Some(trackId) if (trackId == "id") => (f) => Some(f.getID)
+    val getTrackId: (SimpleFeature) => String = trackIdField match {
+      case Some(trackId) if trackId == "id" =>
+        (f) => f.getID
 
       case Some(trackId) =>
         val trackIndex  = sft.indexOf(trackId)
-        (f) => Option(f.getAttribute(trackIndex)).map(_.toString)
+        (f) => {
+          val track = f.getAttribute(trackIndex)
+          if (track == null) null else track.toString
+        }
 
-      case None => (_) => None
+      case None =>
+        (_) => null
     }
 
     // gets the label from a feature
@@ -158,7 +155,7 @@ object BinaryOutputEncoder extends Logging {
     // encodes the values in either 16 or 24 bytes
     val encode: (ValuesToEncode) => Unit = labelField match {
       case Some(label) => (v) => {
-        val toEncode = ExtendedValues(v.lat, v.lon, v.dtg, v.track, v.label)
+        val toEncode = ExtendedValues(v.lat, v.lon, v.dtg, v.track, v.label.getOrElse(-1))
         Convert2ViewerFunction.encode(toEncode, output)
       }
       case None => (v) => {
@@ -172,13 +169,13 @@ object BinaryOutputEncoder extends Logging {
       fc.features().flatMap { sf =>
         val points = getLineLatLon(sf)
         val dates = getLineDtg(sf)
-        if (points.size != dates.size) {
+        if (points.length != dates.length) {
           logger.warn(s"Mismatched geometries and dates for simple feature ${sf.getID} - skipping")
           Seq.empty
         } else {
           val trackId = getTrackId(sf)
           val label = getLabel(sf)
-          (0 until points.size).map { case i =>
+          points.indices.map { case i =>
             val (lat, lon) = points(i)
             ValuesToEncode(lat, lon, dates(i), trackId, label)
           }

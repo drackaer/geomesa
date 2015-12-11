@@ -1,23 +1,16 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.mapreduce
 
-import java.io.{DataInput, DataOutput}
+import java.io._
 import java.lang.Float._
+import java.net.{URL, URLClassLoader}
 
 import com.typesafe.scalalogging.slf4j.Logging
 import org.apache.accumulo.core.client.mapreduce.{AccumuloInputFormat, InputFormatBase, RangeInputSplit}
@@ -31,12 +24,11 @@ import org.apache.hadoop.mapreduce._
 import org.geotools.data.{DataStoreFinder, Query}
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloDataStoreFactory}
+import org.locationtech.geomesa.accumulo.index.QueryHints.RichHints
 import org.locationtech.geomesa.accumulo.index._
-import org.locationtech.geomesa.accumulo.stats.QueryStatTransform
 import org.locationtech.geomesa.features.SerializationType.SerializationType
 import org.locationtech.geomesa.features.SimpleFeatureDeserializers
-import org.locationtech.geomesa.jobs.GeoMesaConfigurator
-import org.locationtech.geomesa.jobs.mapred.GeoMesaInputFormat._
+import org.locationtech.geomesa.jobs.{GeoMesaConfigurator, JobUtils}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
 
@@ -45,6 +37,8 @@ import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
 
 object GeoMesaInputFormat extends Logging {
+
+  val SYS_PROP_SPARK_LOAD_CP = "org.locationtech.geomesa.spark.load-classpath"
 
   def configure(job: Job,
                 dsParams: Map[String, String],
@@ -56,7 +50,6 @@ object GeoMesaInputFormat extends Logging {
     val query = new Query(featureTypeName, ecql, trans)
     configure(job, dsParams, query)
   }
-
 
   /**
    * Configure the input format.
@@ -73,44 +66,21 @@ object GeoMesaInputFormat extends Logging {
     // set up the underlying accumulo input format
     val user = AccumuloDataStoreFactory.params.userParam.lookUp(dsParams).asInstanceOf[String]
     val password = AccumuloDataStoreFactory.params.passwordParam.lookUp(dsParams).asInstanceOf[String]
-    InputFormatBase.setConnectorInfo(job, user, new PasswordToken(password.getBytes))
+    InputFormatBaseAdapter.setConnectorInfo(job, user, new PasswordToken(password.getBytes))
 
     val instance = AccumuloDataStoreFactory.params.instanceIdParam.lookUp(dsParams).asInstanceOf[String]
     val zookeepers = AccumuloDataStoreFactory.params.zookeepersParam.lookUp(dsParams).asInstanceOf[String]
-    InputFormatBase.setZooKeeperInstance(job, instance, zookeepers)
+    InputFormatBaseAdapter.setZooKeeperInstance(job, instance, zookeepers)
 
     val auths = Option(AccumuloDataStoreFactory.params.authsParam.lookUp(dsParams).asInstanceOf[String])
-    auths.foreach(a => InputFormatBase.setScanAuthorizations(job, new Authorizations(a.split(","): _*)))
+    auths.foreach(a => InputFormatBaseAdapter.setScanAuthorizations(job, new Authorizations(a.split(","): _*)))
 
-    // run an explain query to set up the iterators, ranges, etc
     val featureTypeName = query.getTypeName
-    val queryPlans = ds.getQueryPlan(featureTypeName, query)
 
-    // see if the plan is something we can execute from a single table
-    val tryPlan = if (queryPlans.length > 1) None else queryPlans.headOption.filter {
-      case qp: JoinPlan => false
-      case _ => true
-    }
+    // get the query plan to set up the iterators, ranges, etc
+    val queryPlan = JobUtils.getSingleQueryPlan(ds, query)
 
-    val queryPlan = tryPlan.getOrElse {
-      // this query has a join or requires multiple scans - instead, fall back to the ST index
-      logger.warn("Desired query plan requires multiple scans - falling back to spatio-temporal scan")
-      val sft = ds.getSchema(featureTypeName)
-      val featureEncoding = ds.getFeatureEncoding(sft)
-      val indexSchema = ds.getIndexSchemaFmt(featureTypeName)
-      val hints = ds.strategyHints(sft)
-      val version = ds.getGeomesaVersion(sft)
-      val queryPlanner = new QueryPlanner(sft, featureEncoding, indexSchema, ds, hints, version)
-      val qps = new STIdxStrategy().getQueryPlans(query, queryPlanner, ExplainNull)
-      if (qps.length > 1) {
-        logger.error("The query being executed requires multiple scans, which is not currently " +
-            "supported by geomesa. Your result set will be partially incomplete. This is most likely due " +
-            s"to an OR clause in your query. Query: ${QueryStatTransform.filterToString(query.getFilter)}")
-      }
-      qps.head
-    }
-
-    // use the explain results to set the accumulo input format options
+    // use the query plan to set the accumulo input format options
     InputFormatBase.setInputTableName(job, queryPlan.table)
     if (queryPlan.ranges.nonEmpty) {
       InputFormatBase.setRanges(job, queryPlan.ranges)
@@ -133,7 +103,34 @@ object GeoMesaInputFormat extends Logging {
     if (query.getFilter != Filter.INCLUDE) {
       GeoMesaConfigurator.setFilter(conf, ECQL.toCQL(query.getFilter))
     }
-    getTransformSchema(query).foreach(GeoMesaConfigurator.setTransformSchema(conf, _))
+    query.getHints.getTransformSchema.foreach(GeoMesaConfigurator.setTransformSchema(conf, _))
+  }
+
+  /**
+   * This takes any jars that have been loaded by spark in the context classloader and makes them
+   * available to the general classloader. This is required as not all classes (even spark ones) check
+   * the context classloader.
+   */
+  def ensureSparkClasspath(): Unit = {
+    val sysLoader = ClassLoader.getSystemClassLoader
+    val ccl = Thread.currentThread().getContextClassLoader
+    if (ccl == null || !ccl.getClass.getCanonicalName.startsWith("org.apache.spark.")) {
+      logger.debug("No spark context classloader found")
+    } else if (!ccl.isInstanceOf[URLClassLoader]) {
+      logger.warn(s"Found context classloader, but can't handle type ${ccl.getClass.getCanonicalName}")
+    } else if (!sysLoader.isInstanceOf[URLClassLoader]) {
+      logger.warn(s"Found context classloader, but can't add to type ${sysLoader.getClass.getCanonicalName}")
+    } else {
+      // hack to get around protected visibility of addURL
+      // this might fail if there is a security manager present
+      val addUrl = classOf[URLClassLoader].getDeclaredMethod("addURL", classOf[URL])
+      addUrl.setAccessible(true)
+      val sysUrls = sysLoader.asInstanceOf[URLClassLoader].getURLs.map(_.toString).toSet
+      val (dupeUrls, newUrls) = ccl.asInstanceOf[URLClassLoader].getURLs.filterNot(_.toString.contains("__app__.jar")).partition(url => sysUrls.contains(url.toString))
+      newUrls.foreach(addUrl.invoke(sysLoader, _))
+      logger.debug(s"Loaded ${newUrls.length} urls from context classloader into system classloader " +
+          s"and ignored ${dupeUrls.length} that are already loaded")
+    }
   }
 }
 
@@ -274,6 +271,12 @@ class GeoMesaRecordReader(readers: Array[RecordReader[Key, Value]], decoder: org
  * mutable state.
  */
 class GroupedSplit extends InputSplit with Writable {
+
+  // if we're running in spark, we need to load the context classpath before anything else,
+  // otherwise we get classloading and serialization issues
+  sys.env.get(GeoMesaInputFormat.SYS_PROP_SPARK_LOAD_CP).filter(_.toBoolean).foreach { _ =>
+    GeoMesaInputFormat.ensureSparkClasspath()
+  }
 
   var location: String = null
   var splits: ArrayBuffer[RangeInputSplit] = ArrayBuffer.empty

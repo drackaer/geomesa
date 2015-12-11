@@ -1,32 +1,24 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.tools
 
-import java.io.{BufferedReader, InputStreamReader}
-import java.util.UUID
+import java.io.{BufferedReader, File, InputStreamReader}
 
 import com.typesafe.scalalogging.slf4j.Logging
-import org.apache.accumulo.core.client.ZooKeeperInstance
+import org.apache.accumulo.server.client.HdfsZooInstance
 import org.apache.commons.compress.compressors.bzip2.BZip2Utils
 import org.apache.commons.compress.compressors.gzip.GzipUtils
 import org.apache.commons.compress.compressors.xz.XZUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 import scala.xml.XML
 
 object Utils {
@@ -41,27 +33,19 @@ object Utils {
     val VISIBILITIES        = "geomesa.tools.ingest.visibilities"
     val SHARDS              = "geomesa.tools.ingest.shards"
     val INDEX_SCHEMA_FMT    = "geomesa.tools.ingest.index-schema-format"
-    val SKIP_HEADER         = "geomesa.tools.ingest.skip-header"
-    val DO_HASH             = "geomesa.tools.ingest.do-hash"
-    val DT_FORMAT           = "geomesa.tools.ingest.dt-format"
-    val ID_FIELDS           = "geomesa.tools.ingest.id-fields"
-    val DT_FIELD            = "geomesa.tools.ingest.dt-fields"
     val FILE_PATH           = "geomesa.tools.ingest.path"
-    val FORMAT              = "geomesa.tools.ingest.delimiter"
-    val LON_ATTRIBUTE       = "geomesa.tools.ingest.lon-attribute"
-    val LAT_ATTRIBUTE       = "geomesa.tools.ingest.lat-attribute"
     val FEATURE_NAME        = "geomesa.tools.feature.name"
     val CATALOG_TABLE       = "geomesa.tools.feature.tables.catalog"
     val SFT_SPEC            = "geomesa.tools.feature.sft-spec"
-    val COLS                = "geomesa.tools.ingest.cols"
     val IS_TEST_INGEST      = "geomesa.tools.ingest.is-test-ingest"
-    val LIST_DELIMITER      = "geomesa.tools.ingest.list-delimiter"
-    val MAP_DELIMITERS      = "geomesa.tools.ingest.map-delimiter"
+    val CONVERTER_CONFIG    = "geomesa.tools.ingest.converter-config"
   }
 
   object Formats {
     val CSV     = "csv"
     val TSV     = "tsv"
+    val TIFF    = "geotiff"
+    val DTED    = "DTED"
     val SHP     = "shp"
     val JSON    = "json"
     val GeoJson = "geojson"
@@ -77,13 +61,18 @@ object Utils {
       }
 
       fileExtension match {
-        case _ if name.toLowerCase.endsWith(CSV)  => CSV
-        case _ if name.toLowerCase.endsWith(TSV)  => TSV
-        case _ if name.toLowerCase.endsWith(SHP)  => SHP
-        case _ if name.toLowerCase.endsWith(JSON) => JSON
-        case _ if name.toLowerCase.endsWith(GML)  => GML
-        case _ if name.toLowerCase.endsWith(BIN)  => BIN
-        case _ => "unknown"
+        case _ if fileExtension.toLowerCase.endsWith(CSV)      => CSV
+        case _ if fileExtension.toLowerCase.endsWith(TSV)      => TSV
+        case _ if fileExtension.toLowerCase.endsWith("tif") ||
+                  fileExtension.toLowerCase.endsWith("tiff")   => TIFF
+        case _ if fileExtension.toLowerCase.endsWith("dt0") ||
+                  fileExtension.toLowerCase.endsWith("dt1") ||
+                  fileExtension.toLowerCase.endsWith("dt2")    => DTED
+        case _ if fileExtension.toLowerCase.endsWith(SHP)      => SHP
+        case _ if fileExtension.toLowerCase.endsWith(JSON)     => JSON
+        case _ if fileExtension.toLowerCase.endsWith(GML)      => GML
+        case _ if fileExtension.toLowerCase.endsWith(BIN)      => BIN
+        case _                                                 => "unknown"
       }
     }
 
@@ -92,14 +81,33 @@ object Utils {
 
   object Modes {
     val Local = "local"
-    val Hdfs  = "hdfs"
+    val Hdfs = "hdfs"
 
     def getJobMode(filename: String) = if (filename.toLowerCase.trim.startsWith("hdfs://")) Hdfs else Local
     def getModeFlag(filename: String) = "--" + getJobMode(filename)
   }
 
-}
+  //Recursively delete a local directory and its children
+  def deleteLocalDirectory(pathStr: String) {
+    val path = new File(pathStr)
+    if (path.exists) {
+      val files = path.listFiles
+      files.foreach { _ match {
+        case p if p.isDirectory => deleteLocalDirectory(p.getAbsolutePath)
+        case f => f.delete
+      }}
+      path.delete
+    }
+  }
 
+  //Recursively delete a HDFS directory and its children
+  def deleteHdfsDirectory(pathStr: String) {
+    val fs = FileSystem.get(new Configuration)
+    val path = new Path(pathStr)
+    fs.delete(path, true)
+  }
+
+}
 /* get password trait */
 trait GetPassword {
   def getPassword(pass: String) = Option(pass).getOrElse({
@@ -119,7 +127,11 @@ trait GetPassword {
  * the system path in ACCUMULO_HOME in the case that command line parameters are not provided
  */
 trait AccumuloProperties extends GetPassword with Logging {
-  lazy val accumuloConf = XML.loadFile(s"${System.getenv("ACCUMULO_HOME")}/conf/accumulo-site.xml")
+  lazy val accumuloConf = {
+    val conf = Option(System.getProperty("geomesa.tools.accumulo.site.xml"))
+      .getOrElse(s"${System.getenv("ACCUMULO_HOME")}/conf/accumulo-site.xml")
+    XML.loadFile(conf)
+  }
 
   lazy val zookeepersProp =
     (accumuloConf \\ "property")
@@ -135,14 +147,7 @@ trait AccumuloProperties extends GetPassword with Logging {
       .head)
     .getOrElse("/accumulo")
 
-  lazy val instanceIdStr =
-    Try(ZooKeeperInstance.getInstanceIDFromHdfs(new Path(instanceDfsDir, "instance_id"))) match {
-      case Success(value) => value
-      case Failure(ex) =>
-        throw new Exception("Error retrieving /accumulo/instance_id from HDFS. To resolve this, double check that " +
-          "the HADOOP_CONF_DIR environment variable is set. If that does not work, specify your Accumulo Instance " +
-          "Name as an argument with the --instance-name flag.", ex)
-    }
+  def instanceIdStr = HdfsZooInstance.getInstance().getInstanceID
 
-  lazy val instanceName = new ZooKeeperInstance(UUID.fromString(instanceIdStr), zookeepersProp).getInstanceName
+  def instanceName = HdfsZooInstance.getInstance().getInstanceName
 }

@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.process
 
@@ -32,8 +24,6 @@ import scala.collection.JavaConversions._
   description = "Bulk Import data into Geomesa from another process with no transformations of data"
 )
 class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
-
-  val DEFAULT_MAX_SHARD = 3 // 4 shards
 
   @DescribeResult(name = "layerName", description = "Name of the new featuretype, with workspace")
   def execute(
@@ -65,13 +55,6 @@ class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
                keywordStrs: ju.List[String],
 
                @DescribeParameter(
-                 name = "numShards",
-                 min = 0,
-                 max= 1,
-                 description = "Number of shards to store for this table (defaults to 4)")
-               numShards: Integer,
-
-               @DescribeParameter(
                  name = "securityLevel",
                  min = 0,
                  max = 1,
@@ -90,9 +73,7 @@ class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
       throw new ProcessException(s"Unable to find store $store in workspace $workspace")
     }
 
-    val maxShard = Option(numShards).map { n => if(n > 1) n-1 else DEFAULT_MAX_SHARD }.getOrElse(DEFAULT_MAX_SHARD)
-
-    val targetType = importIntoStore(features, name, storeInfo, maxShard, Option(securityLevel))
+    val targetType = importIntoStore(features, name, storeInfo, Option(securityLevel))
 
     // import the layer into geoserver
     catalogBuilder.setStore(storeInfo)
@@ -117,7 +98,6 @@ class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
   def importIntoStore(features: SimpleFeatureCollection,
                       name: String,
                       storeInfo: DataStoreInfo,
-                      maxShard: Int,
                       visibility: Option[String]) = {
     val ds = storeInfo.getDataStore(null)
     if(!ds.isInstanceOf[AccumuloDataStore]) {
@@ -129,7 +109,7 @@ class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
     sftBuilder.init(features.getSchema)
     sftBuilder.setName(name)
     val sft = sftBuilder.buildFeatureType
-    accumuloDS.createSchema(sft, maxShard)
+    accumuloDS.createSchema(sft)
 
     // query the actual SFT stored by the source
     val storedSft = accumuloDS.getSchema(sft.getName)
@@ -145,3 +125,4 @@ class ImportProcess(val catalog: Catalog) extends GeomesaProcess {
   }
 
 }
+

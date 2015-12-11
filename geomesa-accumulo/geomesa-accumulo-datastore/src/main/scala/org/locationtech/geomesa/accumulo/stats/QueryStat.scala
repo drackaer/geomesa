@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.stats
 
@@ -94,21 +86,13 @@ object QueryStatTransform extends StatTransform[QueryStat] {
     QueryStat(featureName, date, queryFilter, queryHints, planTime, scanTime, hits)
   }
 
-  /**
-   * Converts a filter object to a string for persisting
-   *
-   * @param filter
-   * @return
-   */
-  def filterToString(filter: Filter): String = Try(ECQL.toCQL(filter)).getOrElse(filter.toString)
-
   // list of query hints we want to persist
   val QUERY_HINTS = List[Hints.Key](TRANSFORMS,
                                     TRANSFORM_SCHEMA,
-                                    DENSITY_KEY,
-                                    BBOX_KEY,
+                                    DENSITY_BBOX_KEY,
                                     WIDTH_KEY,
                                     HEIGHT_KEY,
+                                    BIN_TRACK_KEY,
                                     TEMPORAL_DENSITY_KEY,
                                     TIME_INTERVAL_KEY,
                                     TIME_BUCKETS_KEY)
@@ -135,12 +119,12 @@ object QueryStatTransform extends StatTransform[QueryStat] {
     key match {
       case TRANSFORMS           => "TRANSFORMS"
       case TRANSFORM_SCHEMA     => "TRANSFORM_SCHEMA"
-      case DENSITY_KEY          => "DENSITY_KEY"
+      case BIN_TRACK_KEY        => "BIN_TRACK_KEY"
       case TEMPORAL_DENSITY_KEY => "TEMPORAL_DENSITY_KEY"
       case TIME_INTERVAL_KEY    => "TIME_INTERVAL_KEY"
       case RETURN_ENCODED       => "RETURN_ENCODED"
       case TIME_BUCKETS_KEY     => "TIME_BUCKETS_KEY"
-      case BBOX_KEY             => "BBOX_KEY"
+      case DENSITY_BBOX_KEY     => "DENSITY_BBOX_KEY"
       case WIDTH_KEY            => "WIDTH_KEY"
       case HEIGHT_KEY           => "HEIGHT_KEY"
       case _                    => "unknown_hint"

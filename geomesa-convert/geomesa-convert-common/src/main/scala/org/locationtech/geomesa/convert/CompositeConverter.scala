@@ -1,23 +1,15 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.convert
 
 import com.typesafe.config.Config
-import org.locationtech.geomesa.convert.Transformers.{EvaluationContext, Predicate}
+import org.locationtech.geomesa.convert.Transformers.{DefaultCounter, Counter, EvaluationContext, Predicate}
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.collection.JavaConversions._
@@ -44,20 +36,23 @@ class CompositeConverter[I](val targetSFT: SimpleFeatureType,
 
   val evaluationContexts = List.fill(converters.length)(new EvaluationContext(null, null))
 
-  override def processInput(is: Iterator[I],  gParams: Map[String, Any] = Map.empty): Iterator[SimpleFeature] = {
+  def processWithCallback(gParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): (I) => Seq[SimpleFeature] = {
     var count = 0
-    is.flatMap { input =>
+    (input: I) => {
       count += 1
       converters.view.zipWithIndex.flatMap { case ((pred, conv), i) =>
         implicit val ec = evaluationContexts(i)
-        ec.setCount(count)
+        ec.getCounter.setLineCount(count)
         processIfValid(input, pred, conv, gParams)
       }.headOption
-    }
+    }.toSeq
   }
 
-  // noop
-  override def processSingleInput(i: I, gParams: Map[String, Any] = Map.empty)(implicit ec: EvaluationContext): Option[SimpleFeature] = null
+  override def processInput(is: Iterator[I],  gParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): Iterator[SimpleFeature] =
+    is.flatMap(processWithCallback(gParams, counter))
+
+  override def processSingleInput(i: I, gParams: Map[String, Any] = Map.empty)(implicit ec: EvaluationContext): Seq[SimpleFeature] =
+    throw new UnsupportedOperationException("Single input processing is not enabled with composite converters...yet")
 
   private val mutableArray = Array.ofDim[Any](1)
 
@@ -70,8 +65,8 @@ class CompositeConverter[I](val targetSFT: SimpleFeatureType,
       Try {
         mutableArray(0) = input
         pred.eval(mutableArray)
-      }.toOption
+      }.toOption.toSeq
 
-    opt.flatMap { v => if (v) conv.processSingleInput(input, gParams)(ec) else None }
+    opt.flatMap { v => if (v) conv.processSingleInput(input, gParams)(ec) else Seq.empty }
   }
 }

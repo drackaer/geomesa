@@ -1,20 +1,14 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa
+
+import org.locationtech.geomesa.accumulo.util.Z3FeatureIdGenerator
 
 import scala.collection.mutable
 
@@ -24,7 +18,6 @@ package object accumulo {
   //  Since we would like to be able to use ECQL filters, we are restricted to letters, numbers, and _'s.
   val DEFAULT_GEOMETRY_PROPERTY_NAME = "SF_PROPERTY_GEOMETRY"
   val DEFAULT_DTG_PROPERTY_NAME = "dtg"
-  val DEFAULT_DTG_END_PROPERTY_NAME = "dtg_end_time"
 
   val DEFAULT_FEATURE_TYPE = "geomesa.feature.type"
   val DEFAULT_SCHEMA_NAME  = "geomesa.index.schema"
@@ -37,6 +30,7 @@ package object accumulo {
   val DEFAULT_CACHE_SIZE_NAME                = "geomesa.index.cache-size"
   val DEFAULT_CACHE_TABLE_NAME               = "geomesa.index.cache-table"
   val DEFAULT_AGGREGATOR_CLASS_PROPERTY_NAME = "geomesa.iterators.aggregator-class"
+  val DEFAULT_FILTER_PROPERTY_NAME           = "geomesa.iterators.filter-name"
 
   val GEOMESA_ITERATORS_SIMPLE_FEATURE_TYPE      = "geomesa.iterators.aggregator-types"
   val GEOMESA_ITERATORS_SFT_NAME                 = "geomesa.iterators.sft-name"
@@ -50,6 +44,39 @@ package object accumulo {
   val GEOMESA_ITERATORS_IS_TEMPORAL_DENSITY_TYPE = "geomesa.iterators.is-temporal-density-type"
   val GEOMESA_ITERATORS_INDEX_SCHEMA             = "geomesa.iterators.index.schema"
   val GEOMESA_ITERATORS_VERSION                  = "geomesa.iterators.version"
+
+  object GeomesaSystemProperties {
+
+    val CONFIG_FILE = PropAndDefault("geomesa.config.file", "geomesa-site.xml")
+
+    object QueryProperties {
+      val QUERY_EXACT_COUNT    = PropAndDefault("geomesa.force.count", "true")
+      val QUERY_TIMEOUT_MILLIS = PropAndDefault("geomesa.query.timeout.millis", null) // default is no timeout
+      val SCAN_BATCH_RANGES    = PropAndDefault("geomesa.scan.ranges.batch", "10000")
+    }
+
+    object BatchWriterProperties {
+      // Measured in millis, default 10 seconds
+      val WRITER_LATENCY_MILLIS  = PropAndDefault("geomesa.batchwriter.latency.millis", "10000")
+      // Measured in bytes, default 1 megabyte
+      val WRITER_MEMORY_BYTES    = PropAndDefault("geomesa.batchwriter.memory", "1000000")
+      val WRITER_THREADS         = PropAndDefault("geomesa.batchwriter.maxthreads", "10")
+      // Timeout measured in seconds.  Likely unnecessary.
+      val WRITE_TIMEOUT_MILLIS   = PropAndDefault("geomesa.batchwriter.timeout.millis", null)
+    }
+
+    object FeatureIdProperties {
+      val FEATURE_ID_GENERATOR =
+        PropAndDefault("geomesa.feature.id-generator", classOf[Z3FeatureIdGenerator].getCanonicalName)
+    }
+
+    case class PropAndDefault(property: String, default: String) {
+      def get: String = sys.props.getOrElse(property, default)
+      def option: Option[String] = sys.props.get(property).orElse(Option(default))
+      def set(value: String): Unit = sys.props.put(property, value)
+      def clear(): Unit = sys.props.remove(property)
+    }
+  }
 
   /**
    * Sums the values by key and returns a map containing all of the keys in the maps, with values

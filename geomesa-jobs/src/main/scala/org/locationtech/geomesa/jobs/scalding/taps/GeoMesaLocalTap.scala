@@ -1,18 +1,10 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.jobs.scalding.taps
 
@@ -29,8 +21,8 @@ import org.geotools.data.{DataStoreFinder, Query}
 import org.geotools.filter.identity.FeatureIdImpl
 import org.geotools.filter.text.ecql.ECQL
 import org.locationtech.geomesa.accumulo.data.{AccumuloDataStore, AccumuloFeatureStore}
+import org.locationtech.geomesa.accumulo.index.QueryHints.RichHints
 import org.locationtech.geomesa.features.ScalaSimpleFeature
-import org.locationtech.geomesa.jobs.GeoMesaConfigurator
 import org.locationtech.geomesa.jobs.scalding._
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.Filter
@@ -52,7 +44,7 @@ case class GeoMesaLocalTap(readOrWrite: AccessMode, scheme: GeoMesaLocalScheme) 
     val transform = options.transform.getOrElse(Query.ALL_NAMES)
     val query = new Query(options.feature, cql, transform)
     val reader = ds.getFeatureReader(options.feature, query)
-    val sft = org.locationtech.geomesa.accumulo.index.getTransformSchema(query).getOrElse(ds.getSchema(options.feature))
+    val sft = query.getHints.getTransformSchema.getOrElse(ds.getSchema(options.feature))
 
     val iterator = new GMRecordReader() with Closeable {
 
@@ -159,10 +151,8 @@ case class GeoMesaLocalScheme(options: GeoMesaSourceOptions)
   override def sinkConfInit(fp: FlowProcess[Properties], tap: GMLocalTap, conf: Properties): Unit = {}
 
   override def source(fp: FlowProcess[Properties], sc: SourceCall[Array[Any], GMRecordReader]): Boolean = {
-    val context = sc.getContext
-    val k = context(0).asInstanceOf[Text]
-    val v = context(1).asInstanceOf[SimpleFeature]
-
+    val k = sc.getInput.createKey()
+    val v = sc.getInput.createValue()
     val hasNext = sc.getInput.next(k, v)
     if (hasNext) {
       sc.getIncomingEntry.setTuple(new Tuple(k, v))
@@ -176,10 +166,4 @@ case class GeoMesaLocalScheme(options: GeoMesaSourceOptions)
     val sf = entry.getObject(1).asInstanceOf[SimpleFeature]
     sc.getOutput.collect(id, sf)
   }
-
-  override def sourcePrepare(fp: FlowProcess[Properties], sc: SourceCall[Array[Any], GMRecordReader]): Unit =
-    sc.setContext(Array(sc.getInput.createKey(), sc.getInput.createValue()))
-
-  override def sourceCleanup(fp: FlowProcess[Properties], sc: SourceCall[Array[Any], GMRecordReader]): Unit =
-    sc.setContext(null)
 }

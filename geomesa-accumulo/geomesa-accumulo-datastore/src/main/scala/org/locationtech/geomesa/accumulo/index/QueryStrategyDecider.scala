@@ -1,97 +1,54 @@
-/*
- * Copyright 2014-2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
 import org.geotools.data.Query
-import org.geotools.factory.CommonFactoryFinder
-import org.locationtech.geomesa.accumulo.index.FilterHelper._
+import org.locationtech.geomesa.CURRENT_SCHEMA_VERSION
 import org.locationtech.geomesa.accumulo.index.QueryHints._
-import org.locationtech.geomesa.utils.geotools.RichIterator.RichIterator
+import org.locationtech.geomesa.accumulo.index.Strategy.StrategyType
+import org.locationtech.geomesa.accumulo.index.Strategy.StrategyType.StrategyType
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
+import org.locationtech.geomesa.utils.stats.{MethodProfiling, TimingsImpl}
 import org.opengis.feature.simple.SimpleFeatureType
-import org.opengis.filter.{And, Filter, Id, PropertyIsLike}
-import org.locationtech.geomesa.accumulo.data.INTERNAL_GEOMESA_VERSION
+import org.opengis.filter.Filter
 
-import scala.collection.JavaConversions._
-
-trait VersionedQueryStrategyDecider {
-  def chooseStrategy(sft: SimpleFeatureType, query: Query, hints: StrategyHints, version: Int): Strategy
-}
-
-object VersionedQueryStrategyDecider {
-  def apply(version: Int): VersionedQueryStrategyDecider = version match {
-    case i if i <= 4 => new QueryStrategyDeciderV4
-    case 5           => new QueryStrategyDeciderV5
-  }
+trait QueryStrategyDecider {
+  def chooseStrategies(sft: SimpleFeatureType,
+                       query: Query,
+                       hints: StrategyHints,
+                       requested: Option[StrategyType],
+                       ouptput: ExplainerOutputType): Seq[Strategy]
 }
 
 object QueryStrategyDecider {
+
   // first element is null so that the array index aligns with the version
-  val strategies = Array[VersionedQueryStrategyDecider](null) ++
-      (1 to INTERNAL_GEOMESA_VERSION).map(VersionedQueryStrategyDecider.apply)
+  private val strategies: Array[QueryStrategyDecider] =
+    Array[QueryStrategyDecider](null) ++ (1 to CURRENT_SCHEMA_VERSION).map(QueryStrategyDecider.apply)
 
-  def chooseStrategy(sft: SimpleFeatureType, query: Query, hints: StrategyHints, version: Int): Strategy =
-    strategies(version).chooseStrategy(sft, query, hints, version)
+  def apply(version: Int): QueryStrategyDecider =
+    if (version < 6) new QueryStrategyDeciderV5 else new QueryStrategyDeciderV6
 
-  // TODO try to use wildcard values from the Filter itself (https://geomesa.atlassian.net/browse/GEOMESA-309)
-  // Currently pulling the wildcard values from the filter
-  // leads to inconsistent results...so use % as wildcard
-  val MULTICHAR_WILDCARD = "%"
-  val SINGLE_CHAR_WILDCARD = "_"
-  val NULLBYTE = Array[Byte](0.toByte)
-
-  /* Like queries that can be handled by current reverse index */
-  def likeEligible(filter: PropertyIsLike) = containsNoSingles(filter) && trailingOnlyWildcard(filter)
-
-  /* contains no single character wildcards */
-  def containsNoSingles(filter: PropertyIsLike) =
-    !filter.getLiteral.replace("\\\\", "").replace(s"\\$SINGLE_CHAR_WILDCARD", "").contains(SINGLE_CHAR_WILDCARD)
-
-  def trailingOnlyWildcard(filter: PropertyIsLike) =
-    (filter.getLiteral.endsWith(MULTICHAR_WILDCARD) &&
-      filter.getLiteral.indexOf(MULTICHAR_WILDCARD) == filter.getLiteral.length - MULTICHAR_WILDCARD.length) ||
-      filter.getLiteral.indexOf(MULTICHAR_WILDCARD) == -1
-
+  def chooseStrategies(sft: SimpleFeatureType,
+                       query: Query,
+                       hints: StrategyHints,
+                       requested: Option[StrategyType],
+                       output: ExplainerOutputType = ExplainNull): Seq[Strategy] = {
+    strategies(sft.getSchemaVersion).chooseStrategies(sft, query, hints, requested, output)
+  }
 }
 
-class QueryStrategyDeciderV4 extends VersionedQueryStrategyDecider {
-
-  val REASONABLE_COST = 10000
-  val OPTIMAL_COST = 10
-
-  def chooseStrategy(sft: SimpleFeatureType, query: Query, hints: StrategyHints, version: Int): Strategy = {
-    // check for density queries
-    if (query.getHints.containsKey(BBOX_KEY) || query.getHints.contains(TIME_BUCKETS_KEY)) {
-      // TODO GEOMESA-322 use other strategies with density iterator
-      return new STIdxStrategy
-    }
-
-    query.getFilter match {
-      case id: Id   => new RecordIdxStrategy
-      case and: And => processFilters(decomposeAnd(and), sft, hints)
-      case cql =>
-        // a single clause - check for indexed attributes or fall back to spatio-temporal
-        AttributeIndexStrategy.getStrategy(cql, sft, hints).map(_.strategy).getOrElse(new STIdxStrategy)
-    }
-  }
+class QueryStrategyDeciderV6 extends QueryStrategyDecider with MethodProfiling {
 
   /**
-   * Scans the filter and identify the type of predicates present.
-   *
-   * Choose the query strategy to be employed here. This is the priority:
+   * Scans the filter and identify the type of predicates present, then picks a strategy based on cost.
+   * Currently, the costs are hard-coded to conform to the following priority:
    *
    *   * If an ID predicate is present, it is assumed that only a small number of IDs are requested
    *            --> The Record Index is scanned, and the other ECQL filters, if any, are then applied
@@ -108,62 +65,117 @@ class QueryStrategyDeciderV4 extends VersionedQueryStrategyDecider {
    *   * If filters are not identified, use the STIdxStrategy
    *            --> The ST Index is scanned (likely a full table scan) and the ECQL filters are applied
    */
-  def processFilters(filters: Seq[Filter], sft: SimpleFeatureType, hints: StrategyHints): Strategy = {
-    // record strategy takes priority
-    val recordStrategy = filters.iterator.flatMap(f => RecordIdxStrategy.getStrategy(f, sft, hints)).headOption
-    recordStrategy match {
-      case Some(s) => s.strategy
-      case None    => processNonRecordFilters(filters, sft, hints)
+  override def chooseStrategies(sft: SimpleFeatureType,
+                                query: Query,
+                                hints: StrategyHints,
+                                requested: Option[StrategyType],
+                                output: ExplainerOutputType): Seq[Strategy] = {
+
+    implicit val timings = new TimingsImpl()
+
+    // get the various options that we could potentially use
+    val options = new QueryFilterSplitter(sft).getQueryOptions(query.getFilter)
+
+    val selected = profile({
+      if (requested.isDefined) {
+        val forced = forceStrategy(options, requested.get, query.getFilter)
+        output(s"Filter plan forced to $forced")
+        forced.filters.map(createStrategy)
+      } else if (options.isEmpty) {
+        output("No filter plans found")
+        Seq.empty // corresponds to filter.exclude
+      } else {
+        val filterPlan = if (query.getHints.isDensityQuery) {
+          // TODO GEOMESA-322 use other strategies with density iterator
+          val st = options.find(_.filters.forall(q => q.strategy == StrategyType.Z3 ||
+              q.strategy == StrategyType.ST))
+          val density = st.getOrElse {
+            val fallback = if (query.getFilter == Filter.INCLUDE) None else Some(query.getFilter)
+            FilterPlan(Seq(QueryFilter(StrategyType.ST, Seq(Filter.INCLUDE), fallback)))
+          }
+          output(s"Filter plan for density query: $density")
+          density
+        } else if (options.length == 1) {
+          // only a single option, so don't bother with cost
+          output(s"Filter plan: ${options.head}")
+          options.head
+        } else {
+          // choose the best option based on cost
+          val costs = options.map(o => (o, o.filters.map(getCost(_, sft, hints)).sum)).sortBy(_._2)
+          val cheapest = costs.head
+          output(s"Filter plan selected: ${cheapest._1} (Cost ${cheapest._2})")
+          output(s"Filter plans not used (${costs.size - 1}):", costs.drop(1).map(c => s"${c._1} (Cost ${c._2})"))
+          cheapest._1
+        }
+        filterPlan.filters.map(createStrategy)
+      }
+    }, "cost")
+    output(s"Strategy selection took ${timings.time("cost")}ms for ${options.length} options")
+    selected
+  }
+
+  // see if one of the normal plans matches the requested type - if not, force it
+  private def forceStrategy(options: Seq[FilterPlan], strategy: StrategyType, allFilter: Filter): FilterPlan = {
+    def checkStrategy(f: QueryFilter) = f.strategy == strategy ||
+        (strategy == StrategyType.ST && f.strategy == StrategyType.Z3)
+
+    options.find(_.filters.forall(checkStrategy)) match {
+      case None => FilterPlan(Seq(QueryFilter(strategy, Seq(Filter.INCLUDE), Some(allFilter))))
+      case Some(fp) =>
+        val filters = fp.filters.map {
+          // swap z3 to st if required
+          case filter if filter.strategy != strategy => filter.copy(strategy = strategy)
+          case filter => filter
+        }
+        fp.copy(filters = filters)
     }
   }
 
   /**
-   * We've already eliminated record filters - look for attribute + spatio-temporal filters
+   * Gets the estimated cost of running a particular strategy
    */
-  def processNonRecordFilters(filters: Seq[Filter],
-                                      sft: SimpleFeatureType,
-                                      hints: StrategyHints): Strategy = {
-    // look for reasonable cost attribute strategies - expensive ones will not be considered
-    val attributeStrategies =
-      filters.flatMap(f => AttributeIndexStrategy.getStrategy(f, sft, hints)).filter(_.cost < REASONABLE_COST)
-
-    // next look for low cost (high-cardinality) attribute filters - cost is set in the attribute strategy
-    val highCardinalityStrategy = attributeStrategies.find(_.cost < OPTIMAL_COST)
-    highCardinalityStrategy match {
-      case Some(s) => s.strategy
-      case None    => processStFilters(filters, attributeStrategies.headOption, sft, hints)
+  def getCost(filter: QueryFilter, sft: SimpleFeatureType, hints: StrategyHints): Int = {
+    filter.strategy match {
+      case StrategyType.Z3        => Z3IdxStrategy.getCost(filter, sft, hints)
+      case StrategyType.ST        => STIdxStrategy.getCost(filter, sft, hints)
+      case StrategyType.RECORD    => RecordIdxStrategy.getCost(filter, sft, hints)
+      case StrategyType.ATTRIBUTE => AttributeIdxStrategy.getCost(filter, sft, hints)
+      case _ => throw new IllegalStateException(s"Unknown query plan requested: ${filter.strategy}")
     }
   }
 
   /**
-   * We've eliminated the best attribute strategies - look for spatio-temporal and use the best attribute
-   * strategy available as a fallback.
+   * Mapping from strategy type enum to concrete implementation class
    */
-  def processStFilters(filters: Seq[Filter],
-                       fallback: Option[StrategyDecision],
-                       sft: SimpleFeatureType,
-                       hints: StrategyHints): Strategy = {
-    // finally, prefer spatial filters if available
-    val stStrategy = filters.iterator.flatMap(f => STIdxStrategy.getStrategy(f, sft, hints)).headOption
-    stStrategy.orElse(fallback).map(_.strategy).getOrElse(new STIdxStrategy)
+  def createStrategy(filter: QueryFilter): Strategy = {
+    filter.strategy match {
+      case StrategyType.Z3        => new Z3IdxStrategy(filter)
+      case StrategyType.ST        => new STIdxStrategy(filter)
+      case StrategyType.RECORD    => new RecordIdxStrategy(filter)
+      case StrategyType.ATTRIBUTE => new AttributeIdxStrategy(filter)
+      case _ => throw new IllegalStateException(s"Unknown query plan requested: ${filter.strategy}")
+    }
   }
-
-
 }
 
-class QueryStrategyDeciderV5 extends QueryStrategyDeciderV4 {
+@deprecated
+class QueryStrategyDeciderV5 extends QueryStrategyDeciderV6 {
 
-  val ff = CommonFactoryFinder.getFilterFactory2
+  // override to handle old attribute strategy
+  override def getCost(filter: QueryFilter, sft: SimpleFeatureType, hints: StrategyHints): Int = {
+    if (filter.strategy == StrategyType.ATTRIBUTE) {
+      AttributeIdxStrategyV5.getCost(filter, sft, hints)
+    } else {
+      super.getCost(filter, sft, hints)
+    }
+  }
 
-  /**
-   * Adds in a preferred z3 check before falling back to regular st index
-   */
-  override def processStFilters(filters: Seq[Filter],
-                                fallback: Option[StrategyDecision],
-                                sft: SimpleFeatureType,
-                                hints: StrategyHints): Strategy = {
-    // Prefer z3 index if it is available, else fallback to the old STIdxStrategy
-    val z3Strategy = Z3IdxStrategy.getStrategy(ff.and(filters), sft, hints).map(_.strategy)
-    z3Strategy.getOrElse(super.processStFilters(filters, fallback, sft, hints))
+  // override to handle old attribute strategy
+  override def createStrategy(filter: QueryFilter): Strategy = {
+    if (filter.strategy == StrategyType.ATTRIBUTE) {
+      new AttributeIdxStrategyV5(filter)
+    } else {
+      super.createStrategy(filter)
+    }
   }
 }

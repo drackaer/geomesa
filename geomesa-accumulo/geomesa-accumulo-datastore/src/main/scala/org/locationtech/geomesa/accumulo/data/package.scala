@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo
 
@@ -23,13 +15,10 @@ import org.geotools.data.FeatureWriter
 import org.geotools.factory.Hints.ClassKey
 import org.joda.time.{DateTime, Interval}
 import org.locationtech.geomesa.features.SerializationType
+import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 package object data {
-
-  import org.locationtech.geomesa.accumulo.index._
-
-import scala.collection.JavaConversions._
 
   // Datastore parameters
   val INSTANCE_ID      = "geomesa.instance.id"
@@ -58,6 +47,8 @@ import scala.collection.JavaConversions._
   val Z3_TABLE_KEY           = "tables.z3.name"
   val QUERIES_TABLE_KEY      = "tables.queries.name"
   val SHARED_TABLES_KEY      = "tables.sharing"
+  val TABLES_ENABLED_KEY     = SimpleFeatureTypes.ENABLED_INDEXES
+  val SCHEMA_ID_KEY          = "id"
   val VERSION_KEY            = "version"
 
   // Storage implementation constants
@@ -70,17 +61,10 @@ import scala.collection.JavaConversions._
   val EMPTY_COLF           = new Text(EMPTY_STRING)
   val EMPTY_COLQ           = new Text(EMPTY_STRING)
   val EMPTY_VIZ            = new Text(EMPTY_STRING)
+  val EMPTY_TEXT           = new Text()
   val WHOLE_WORLD_BOUNDS   = "-180.0:180.0:-90.0:90.0"
   val ALL_TIME_BOUNDS      = new Interval(new DateTime(0l), new DateTime())  // Epoch till now
   val DEFAULT_ENCODING     = SerializationType.KRYO
-
-  // 0 == old single table style
-  // 1 == multi-table style
-  // 2 == sorted keys in the STIDX table
-  // skipping 3 for integration...
-  // 4 is kryo encoded index values
-  // 5 == z3 index
-  val INTERNAL_GEOMESA_VERSION = 5
 
   // SimpleFeature Hints
   val TRANSFORMS           = new ClassKey(classOf[String])
@@ -89,10 +73,4 @@ import scala.collection.JavaConversions._
 
   type TASKIOCTX = TaskInputOutputContext[_, _, Key, Value]
   type SFFeatureWriter = FeatureWriter[SimpleFeatureType, SimpleFeature]
-
-  def extractDtgField(sft: SimpleFeatureType) =
-    sft.getAttributeDescriptors
-      .find { _.getUserData.contains(SF_PROPERTY_START_TIME) }
-      .map { _.getName.toString }
-      .getOrElse(DEFAULT_DTG_PROPERTY_NAME)
 }

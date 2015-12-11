@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.data
 
@@ -29,16 +21,17 @@ import org.geotools.filter.text.cql2.CQL
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.TestWithDataStore
-import org.locationtech.geomesa.accumulo.data.tables.GeoMesaTable
-import org.locationtech.geomesa.accumulo.index.{AttributeIdxEqualsStrategy, QueryStrategyDecider}
+import org.locationtech.geomesa.accumulo.data.tables.{GeoMesaTable, RecordTable}
+import org.locationtech.geomesa.accumulo.index.{AttributeIdxStrategy, QueryStrategyDecider}
 import org.locationtech.geomesa.features.avro.AvroSimpleFeatureFactory
+import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
 import org.locationtech.geomesa.utils.geotools.Conversions._
 import org.locationtech.geomesa.utils.text.WKTUtils
 import org.opengis.filter.Filter
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 import org.specs2.specification.BeforeExample
-
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import scala.collection.JavaConversions._
 
 @RunWith(classOf[JUnitRunner])
@@ -167,7 +160,7 @@ class AccumuloFeatureWriterTest extends Specification with TestWithDataStore wit
       val features = fs.getFeatures(Filter.INCLUDE).features().toSeq
       features must beEmpty
 
-      forall(GeoMesaTable.getTablesAndNames(sft, ds).map(_._2)) { name =>
+      forall(GeoMesaTable.getTableNames(sft, ds)) { name =>
         val scanner = connector.createScanner(name, new Authorizations())
         try {
           scanner.iterator().hasNext must beFalse
@@ -371,7 +364,7 @@ class AccumuloFeatureWriterTest extends Specification with TestWithDataStore wit
 
       val hints = ds.strategyHints(sft)
       val q = new Query(sft.getTypeName, filter)
-      QueryStrategyDecider.chooseStrategy(sft, q, hints, INTERNAL_GEOMESA_VERSION) must beAnInstanceOf[AttributeIdxEqualsStrategy]
+      QueryStrategyDecider.chooseStrategies(sft, q, hints, None).head must beAnInstanceOf[AttributeIdxStrategy]
 
       import org.locationtech.geomesa.utils.geotools.Conversions._
 
@@ -407,10 +400,53 @@ class AccumuloFeatureWriterTest extends Specification with TestWithDataStore wit
       val features =fs.getFeatures(filter).features().toSeq
       features must haveSize(1)
     }
+
+    "create z3 based uuids" in {
+      val toAdd = Seq(
+        AvroSimpleFeatureFactory.buildAvroFeature(sft, Seq("will", 56.asInstanceOf[AnyRef], dateToIndex, geomToIndex), "fid1"),
+        AvroSimpleFeatureFactory.buildAvroFeature(sft, Seq("george", 33.asInstanceOf[AnyRef], dateToIndex, geomToIndex), "fid2"),
+        AvroSimpleFeatureFactory.buildAvroFeature(sft, Seq("sue", 99.asInstanceOf[AnyRef], dateToIndex, geomToIndex), "fid3"),
+        AvroSimpleFeatureFactory.buildAvroFeature(sft, Seq("karen", 50.asInstanceOf[AnyRef], dateToIndex, geomToIndex), "fid4"),
+        AvroSimpleFeatureFactory.buildAvroFeature(sft, Seq("bob", 56.asInstanceOf[AnyRef], dateToIndex, geomToIndex), "fid5")
+      )
+      // space out the adding slightly so we ensure they sort how we want - resolution is to the ms
+      // also ensure we don't set use_provided_fid
+      toAdd.foreach { f =>
+        val featureCollection = new DefaultFeatureCollection(sftName, sft)
+        f.getUserData.put(Hints.USE_PROVIDED_FID, java.lang.Boolean.FALSE)
+        f.getUserData.remove(Hints.PROVIDED_FID)
+        featureCollection.add(f)
+        // write the feature to the store
+        fs.addFeatures(featureCollection)
+        Thread.sleep(2)
+      }
+
+      val scanner = ds.connector.createScanner(ds.getTableName(sftName, RecordTable), new Authorizations)
+      val serializer = new KryoFeatureSerializer(sft)
+      val rows = scanner.toList
+      scanner.close()
+
+      // trim off table prefix to get the UUIDs
+      val rowKeys = rows.map(_.getKey.getRow.toString).map(r => r.substring(r.length - 36))
+      rowKeys must haveLength(5)
+
+      // ensure that the z3 range is the same
+      rowKeys.map(_.substring(0, 18)).toSet must haveLength(1)
+      // ensure that the second part of the UUID is random
+      rowKeys.map(_.substring(19)).toSet must haveLength(5)
+
+      val ids = rows.map(e => serializer.deserialize(e.getValue.get).getID)
+      ids must haveLength(5)
+      forall(ids)(_ must not(beMatching("fid\\d")))
+      // ensure they share a common prefix, since they have the same dtg/geom
+      ids.map(_.substring(0, 18)).toSet must haveLength(1)
+      // ensure that the second part of the UUID is random
+      ids.map(_.substring(19)).toSet must haveLength(5)
+    }
   }
 
   def clearTablesHard(): Unit = {
-    GeoMesaTable.getTablesAndNames(sft, ds).map(_._2).foreach { name =>
+    GeoMesaTable.getTables(sft).map(ds.getTableName(sft.getTypeName, _)).foreach { name =>
       val deleter = connector.createBatchDeleter(name, new Authorizations(), 5, new BatchWriterConfig())
       deleter.setRanges(Seq(new aRange()))
       deleter.delete()

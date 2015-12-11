@@ -1,18 +1,10 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.convert
 
@@ -21,13 +13,13 @@ import javax.imageio.spi.ServiceRegistry
 import com.typesafe.config.Config
 import com.typesafe.scalalogging.slf4j.Logging
 import org.geotools.filter.identity.FeatureIdImpl
-import org.locationtech.geomesa.convert.Transformers.{EvaluationContext, Expr, FieldLookup, FunctionExpr}
+import org.locationtech.geomesa.convert.Transformers._
 import org.locationtech.geomesa.features.avro.AvroSimpleFeature
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable
-import scala.util.{Failure, Success, Try}
+import scala.util.Try
 
 trait Field {
   def name: String
@@ -59,8 +51,13 @@ trait SimpleFeatureConverterFactory[I] {
 object SimpleFeatureConverters {
   val providers = ServiceRegistry.lookupProviders(classOf[SimpleFeatureConverterFactory[_]]).toList
 
-  def build[I](sft: SimpleFeatureType, conf: Config) = {
-    val converterConfig = conf.getConfig("converter")
+  def build[I](sft: SimpleFeatureType, conf: Config, path: Option[String] = None) = {
+    import org.locationtech.geomesa.utils.conf.ConfConversions._
+    val converterConfig =
+      (path.toSeq ++ Seq("converter", "input-converter"))
+        .foldLeft(conf)( (c, p) => c.getConfigOpt(p).map(c.withFallback).getOrElse(c))
+
+
     providers
       .find(_.canProcess(converterConfig))
       .map(_.buildConverter(sft, converterConfig).asInstanceOf[SimpleFeatureConverter[I]])
@@ -70,8 +67,9 @@ object SimpleFeatureConverters {
 
 trait SimpleFeatureConverter[I] {
   def targetSFT: SimpleFeatureType
-  def processInput(is: Iterator[I], globalParams: Map[String, Any] = Map.empty): Iterator[SimpleFeature]
-  def processSingleInput(i: I, globalParams: Map[String, Any] = Map.empty)(implicit ec: EvaluationContext): Option[SimpleFeature]
+  def processInput(is: Iterator[I], globalParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): Iterator[SimpleFeature]
+  def processWithCallback(gParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): (I) => Seq[SimpleFeature]
+  def processSingleInput(i: I, globalParams: Map[String, Any] = Map.empty)(implicit ec: EvaluationContext): Seq[SimpleFeature]
   def close(): Unit = {}
 }
 
@@ -80,7 +78,7 @@ trait ToSimpleFeatureConverter[I] extends SimpleFeatureConverter[I] with Logging
   def targetSFT: SimpleFeatureType
   def inputFields: IndexedSeq[Field]
   def idBuilder: Expr
-  def fromInputType(i: I): Array[Any]
+  def fromInputType(i: I): Seq[Array[Any]]
   val fieldNameMap = inputFields.map { f => (f.name, f) }.toMap
 
   def dependenciesOf(e: Expr): Seq[String] = e match {
@@ -135,7 +133,10 @@ trait ToSimpleFeatureConverter[I] extends SimpleFeatureConverter[I] with Logging
     sf
   }
 
-  def processSingleInput(i: I, gParams: Map[String, Any])(implicit ec: EvaluationContext): Option[SimpleFeature] = {
+  protected[this] def preProcess(i: I)(implicit ec: EvaluationContext): Option[I] = Some(i)
+
+  override def processSingleInput(i: I, gParams: Map[String, Any])(implicit ec: EvaluationContext): Seq[SimpleFeature] = {
+    val counter = ec.getCounter
     if(reuse == null || ec.fieldNameMap == null) {
       // initialize reuse and ec
       ec.fieldNameMap = inputFieldIndexes
@@ -146,20 +147,36 @@ trait ToSimpleFeatureConverter[I] extends SimpleFeatureConverter[I] with Logging
         ec.fieldNameMap(k) = shiftedIdx
       }
     }
-    Try { convert(fromInputType(i), reuse) } match {
-      case Success(s) => Some(s)
-      case Failure(t) =>
-        logger.warn("Failed to parse input", t)
-        None
+    try {
+      val attributeArrays = fromInputType(i)
+      attributeArrays.flatMap { attributes =>
+        try {
+          val res = convert(attributes, reuse)
+          counter.incSuccess()
+          Some(res)
+        } catch {
+          case e: Exception =>
+            logger.warn("Failed to convert input", e)
+            counter.incFailure()
+            None
+        }
+      }
+    } catch {
+      case e: Exception =>
+        logger.warn("Failed to parse input", e)
+        Seq.empty
     }
   }
 
-  def processInput(is: Iterator[I], gParams: Map[String, Any] = Map.empty): Iterator[SimpleFeature] = {
-    implicit val ctx = new EvaluationContext(inputFieldIndexes, null)
-    is.flatMap { s =>
-      ctx.incrementCount()
-      processSingleInput(s, gParams)
+  def processWithCallback(gParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): (I) => Seq[SimpleFeature] = {
+    implicit val ctx = new EvaluationContext(inputFieldIndexes, null, counter)
+    (i: I) => {
+      counter.incLineCount()
+      preProcess(i).map(processSingleInput(_, gParams)).getOrElse(Seq.empty[SimpleFeature])
     }
   }
+
+  def processInput(is: Iterator[I], gParams: Map[String, Any] = Map.empty, counter: Counter = new DefaultCounter): Iterator[SimpleFeature] =
+    is.flatMap(processWithCallback(gParams, counter))
 
 }

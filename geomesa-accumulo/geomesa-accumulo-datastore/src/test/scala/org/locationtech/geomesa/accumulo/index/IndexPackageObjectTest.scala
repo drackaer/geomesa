@@ -1,24 +1,17 @@
-/*
- * Copyright 2015 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
 import org.geotools.data.Query
-import org.geotools.process.vector.TransformProcess
 import org.junit.runner.RunWith
+import org.locationtech.geomesa.accumulo.index.QueryHints.RichHints
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes._
 import org.opengis.filter.Filter
@@ -33,12 +26,12 @@ class IndexPackageObjectTest extends Specification {
       val sftName = "targetSchemaTest"
       val defaultSchema = "name:String,geom:Point:srid=4326,dtg:Date"
       val origSFT = SimpleFeatureTypes.createType(sftName, defaultSchema)
-      origSFT.getUserData.put(SF_PROPERTY_START_TIME, "dtg")
+      origSFT.setDtgField("dtg")
 
       val query = new Query(sftName, Filter.INCLUDE, Array("name", "helloName=strConcat('hello', name)", "geom"))
-      setQueryTransforms(query, origSFT)
+      QueryPlanner.setQueryTransforms(query, origSFT)
 
-      val transform = getTransformSchema(query)
+      val transform = query.getHints.getTransformSchema
       transform must beSome
       SimpleFeatureTypes.encodeType(transform.get) mustEqual
           s"name:String,*geom:Point:srid=4326:$OPT_INDEX=full:index-value=true,helloName:String"

@@ -1,20 +1,14 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.utils.geotools
+
+import java.util.Date
 
 import com.vividsolutions.jts.geom._
 import org.geotools.data.FeatureReader
@@ -26,6 +20,7 @@ import org.geotools.temporal.`object`.{DefaultInstant, DefaultPeriod, DefaultPos
 import org.geotools.util.{Converter, ConverterFactory}
 import org.joda.time.DateTime
 import org.joda.time.format.ISODateTimeFormat
+import org.locationtech.geomesa.CURRENT_SCHEMA_VERSION
 import org.locationtech.geomesa.utils.stats.Cardinality._
 import org.locationtech.geomesa.utils.stats.IndexCoverage._
 import org.locationtech.geomesa.utils.stats.{Cardinality, IndexCoverage}
@@ -33,6 +28,7 @@ import org.opengis.feature.`type`.AttributeDescriptor
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.temporal.Instant
 
+import scala.reflect.ClassTag
 import scala.util.Try
 
 object Conversions {
@@ -52,13 +48,13 @@ object Conversions {
   }
 
   implicit class RichSimpleFeatureReader(val r: FeatureReader[SimpleFeatureType, SimpleFeature]) extends AnyVal {
-    def getIterator = new Iterator[SimpleFeature] {
+    def getIterator: Iterator[SimpleFeature] = new Iterator[SimpleFeature] {
       override def hasNext: Boolean = r.hasNext
       override def next(): SimpleFeature = r.next()
     }
   }
 
-  implicit def toRichSimpleFeatureIterator(iter: SimpleFeatureIterator) = new RichSimpleFeatureIterator(iter)
+  implicit def toRichSimpleFeatureIterator(iter: SimpleFeatureIterator): RichSimpleFeatureIterator = new RichSimpleFeatureIterator(iter)
   implicit def opengisInstantToJodaInstant(instant: Instant): org.joda.time.Instant = new DateTime(instant.getPosition.getDate).toInstant
   implicit def jodaInstantToOpengisInstant(instant: org.joda.time.Instant): org.opengis.temporal.Instant = new DefaultInstant(new DefaultPosition(instant.toDate))
   implicit def jodaIntervalToOpengisPeriod(interval: org.joda.time.Interval): org.opengis.temporal.Period =
@@ -87,7 +83,6 @@ object Conversions {
     def get[T](name: String) = sf.getAttribute(name).asInstanceOf[T]
 
     def getDouble(str: String): Double = {
-
       val ret = sf.getAttribute(str)
       ret match {
         case d: java.lang.Double  => d
@@ -97,9 +92,17 @@ object Conversions {
       }
     }
 
+    def userData[T](key: AnyRef)(implicit ct: ClassTag[T]): Option[T] = {
+      Option(sf.getUserData.get(key)).flatMap {
+        case ct(x) => Some(x)
+        case _ => None
+      }
+    }
   }
-
 }
+
+
+
 
 object RichIterator {
   implicit class RichIterator[T](val iter: Iterator[T]) extends AnyVal {
@@ -115,6 +118,7 @@ object RichAttributeDescriptors {
 
   import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes._
 
+  //noinspection AccessorLikeMethodIsEmptyParen
   implicit class RichAttributeDescriptor(val ad: AttributeDescriptor) extends AnyVal {
 
     def setIndexCoverage(coverage: IndexCoverage): Unit = ad.getUserData.put(OPT_INDEX, coverage.toString)
@@ -123,11 +127,9 @@ object RichAttributeDescriptors {
       Option(ad.getUserData.get(OPT_INDEX).asInstanceOf[String])
           .flatMap(c => Try(IndexCoverage.withName(c)).toOption).getOrElse(IndexCoverage.NONE)
 
-    def setIndexValue(indexValue: Boolean): Unit =
-      ad.getUserData.put(OPT_INDEX_VALUE, new java.lang.Boolean(indexValue))
+    def setIndexValue(indexValue: Boolean): Unit = ad.getUserData.put(OPT_INDEX_VALUE, indexValue.toString)
 
-    def isIndexValue(): Boolean =
-      Option(ad.getUserData.get(OPT_INDEX_VALUE).asInstanceOf[Boolean]).getOrElse(false)
+    def isIndexValue(): Boolean = Option(ad.getUserData.get(OPT_INDEX_VALUE)).exists(_ == "true")
 
     def setCardinality(cardinality: Cardinality): Unit =
       ad.getUserData.put(OPT_CARDINALITY, cardinality.toString)
@@ -135,6 +137,10 @@ object RichAttributeDescriptors {
     def getCardinality(): Cardinality =
       Option(ad.getUserData.get(OPT_CARDINALITY).asInstanceOf[String])
           .flatMap(c => Try(Cardinality.withName(c)).toOption).getOrElse(Cardinality.UNKNOWN)
+
+    def setBinTrackId(opt: Boolean): Unit = ad.getUserData.put(OPT_BIN_TRACK_ID, opt.toString)
+
+    def isBinTrackId: Boolean = Option(ad.getUserData.get(OPT_BIN_TRACK_ID)).exists(_ == "true")
 
     def setCollectionType(typ: Class[_]): Unit = ad.getUserData.put(USER_DATA_LIST_TYPE, typ)
 
@@ -177,6 +183,61 @@ object RichAttributeDescriptors {
 
     def mapTypes(keyType: Class[_], valueType: Class[_]) =
       builder.userData(USER_DATA_MAP_KEY_TYPE, keyType).userData(USER_DATA_MAP_VALUE_TYPE, valueType)
+  }
+}
+
+object RichSimpleFeatureType {
+
+  import RichAttributeDescriptors.RichAttributeDescriptor
+
+  import scala.collection.JavaConversions._
+
+  val SCHEMA_VERSION_KEY  = "geomesa.version"
+  val TABLE_SHARING_KEY   = "geomesa.table.sharing"
+  val SHARING_PREFIX_KEY  = "geomesa.table.sharing.prefix"
+  val DEFAULT_DATE_KEY    = "geomesa.index.dtg"
+  val ST_INDEX_SCHEMA_KEY = "geomesa.index.st.schema"
+
+  // in general we store everything as strings so that it's easy to pass to accumulo iterators
+  implicit class RichSimpleFeatureType(val sft: SimpleFeatureType) extends AnyVal {
+
+    def getGeomField: String = sft.getGeometryDescriptor.getLocalName
+    def getGeomIndex: Int = sft.indexOf(sft.getGeometryDescriptor.getLocalName)
+
+    def getDtgField: Option[String] = userData[String](DEFAULT_DATE_KEY)
+    def getDtgIndex: Option[Int] = getDtgField.map(sft.indexOf).filter(_ != -1)
+    def getDtgDescriptor = getDtgIndex.map(sft.getDescriptor)
+    def clearDtgField(): Unit = sft.getUserData.remove(DEFAULT_DATE_KEY)
+    def setDtgField(dtg: String): Unit = {
+      val descriptor = sft.getDescriptor(dtg)
+      require(descriptor != null && descriptor.getType.getBinding == classOf[Date],
+        s"Invalid date field '$dtg' for schema $sft")
+      sft.getUserData.put(DEFAULT_DATE_KEY, dtg)
+    }
+
+    def getStIndexSchema: String = userData[String](ST_INDEX_SCHEMA_KEY).orNull
+    def setStIndexSchema(schema: String): Unit = sft.getUserData.put(ST_INDEX_SCHEMA_KEY, schema)
+
+    def getBinTrackId: Option[String] = sft.getAttributeDescriptors.find(_.isBinTrackId).map(_.getLocalName)
+
+    def getSchemaVersion: Int =
+      userData[String](SCHEMA_VERSION_KEY).map(_.toInt).getOrElse(CURRENT_SCHEMA_VERSION)
+    def setSchemaVersion(version: Int): Unit = sft.getUserData.put(SCHEMA_VERSION_KEY, version.toString)
+
+    def isPoints = sft.getGeometryDescriptor.getType.getBinding == classOf[Point]
+    def isLines = sft.getGeometryDescriptor.getType.getBinding == classOf[LineString]
+
+    //  If no user data is specified when creating a new SFT, we should default to 'true'.
+    def isTableSharing: Boolean = userData[String](TABLE_SHARING_KEY).map(_.toBoolean).getOrElse(true)
+    def setTableSharing(sharing: Boolean): Unit = sft.getUserData.put(TABLE_SHARING_KEY, sharing.toString)
+
+    def getTableSharingPrefix: String = userData[String](SHARING_PREFIX_KEY).getOrElse("")
+    def setTableSharingPrefix(prefix: String): Unit = sft.getUserData.put(SHARING_PREFIX_KEY, prefix)
+
+    def getEnabledTables: String = userData[String](SimpleFeatureTypes.ENABLED_INDEXES).getOrElse("")
+    def setEnabledTables(tables: String): Unit = sft.getUserData.put(SimpleFeatureTypes.ENABLED_INDEXES, tables)
+
+    def userData[T](key: AnyRef): Option[T] = Option(sft.getUserData.get(key).asInstanceOf[T])
   }
 }
 

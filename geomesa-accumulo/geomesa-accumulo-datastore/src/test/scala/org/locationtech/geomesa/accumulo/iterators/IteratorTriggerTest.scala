@@ -1,27 +1,20 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.iterators
 
 import org.geotools.data.Query
 import org.geotools.filter.text.ecql.ECQL
 import org.junit.runner.RunWith
-import org.locationtech.geomesa.accumulo.filter._
-import org.locationtech.geomesa.accumulo.index.FilterHelper._
 import org.locationtech.geomesa.accumulo.index._
+import org.locationtech.geomesa.filter.FilterHelper._
+import org.locationtech.geomesa.filter._
+import org.locationtech.geomesa.utils.geotools.RichSimpleFeatureType.RichSimpleFeatureType
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes._
 import org.opengis.feature.simple.SimpleFeatureType
@@ -44,14 +37,14 @@ class IteratorTriggerTest extends Specification {
 
     val testFeatureType: SimpleFeatureType = {
       val featureType: SimpleFeatureType = SimpleFeatureTypes.createType(featureName, testFeatureTypeSpec)
-      featureType.getUserData.put(SF_PROPERTY_START_TIME, "dtg")
+      featureType.setDtgField("dtg")
       featureType
     }
 
 
     def sampleQuery(ecql: org.opengis.filter.Filter, finalAttributes: Array[String]): Query = {
       val aQuery = new Query(testFeatureType.getTypeName, ecql, finalAttributes)
-      org.locationtech.geomesa.accumulo.index.setQueryTransforms(aQuery, testFeatureType) // normally called by data store when getting feature reader
+      QueryPlanner.setQueryTransforms(aQuery, testFeatureType) // normally called by data store when getting feature reader
       aQuery
     }
 
@@ -62,8 +55,8 @@ class IteratorTriggerTest extends Specification {
      */
 
     def extractReWrittenCQL(query: Query, featureType: SimpleFeatureType): Option[Filter] = {
-      val (_, otherFilters) = partitionGeom(query.getFilter, featureType)
-      val (_, ecqlFilters: Seq[Filter]) = partitionTemporal(otherFilters, getDtgFieldName(featureType))
+      val (_, otherFilters) = partitionPrimarySpatials(query.getFilter, featureType)
+      val (_, ecqlFilters: Seq[Filter]) = partitionPrimaryTemporals(otherFilters, featureType)
 
       filterListAsAnd(ecqlFilters)
     }
@@ -118,7 +111,7 @@ class IteratorTriggerTest extends Specification {
     def useIndexOnlyIteratorTest(ecqlPred: String, transformText: Array[String]): Boolean = {
       val aQuery = TestTable.sampleQuery(ECQL.toFilter(ecqlPred), transformText)
       val modECQLPred = TestTable.extractReWrittenCQL(aQuery, TestTable.testFeatureType)
-      IteratorTrigger.useIndexOnlyIterator(modECQLPred, aQuery, TestTable.testFeatureType)
+      IteratorTrigger.useIndexOnlyIterator(modECQLPred, aQuery.getHints, TestTable.testFeatureType)
     }
 
     /**
@@ -127,7 +120,7 @@ class IteratorTriggerTest extends Specification {
     def useSimpleFeatureFilteringIteratorTest(ecqlPred: String, transformText: Array[String]): Boolean = {
       val aQuery = TestTable.sampleQuery(ECQL.toFilter(ecqlPred), transformText)
       val modECQLPred = TestTable.extractReWrittenCQL(aQuery, TestTable.testFeatureType)
-      IteratorTrigger.useSimpleFeatureFilteringIterator(modECQLPred, aQuery)
+      IteratorTrigger.useSimpleFeatureFilteringIterator(modECQLPred, aQuery.getHints)
     }
 
     /**
@@ -136,7 +129,7 @@ class IteratorTriggerTest extends Specification {
     def chooseIteratorTest(ecqlPred: String, transformText: Array[String]): IteratorConfig = {
       val aQuery = TestTable.sampleQuery(ECQL.toFilter(ecqlPred), transformText)
       val modECQLPred = TestTable.extractReWrittenCQL(aQuery, TestTable.testFeatureType)
-      IteratorTrigger.chooseIterator(modECQLPred, aQuery, TestTable.testFeatureType)
+      IteratorTrigger.chooseIterator(aQuery.getFilter, modECQLPred, aQuery.getHints, TestTable.testFeatureType)
     }
   }
     "useIndexOnlyIterator" should {
@@ -255,8 +248,8 @@ class IteratorTriggerTest extends Specification {
 
       def testOverlap(filter: String, attributes: Array[String]) = {
         val query = new Query("overlaptest", ECQL.toFilter(filter), attributes)
-        org.locationtech.geomesa.accumulo.index.setQueryTransforms(query, sft)
-        IteratorTrigger.doTransformsCoverFilters(query)
+        QueryPlanner.setQueryTransforms(query, sft)
+        IteratorTrigger.doTransformsCoverFilters(query.getHints, query.getFilter)
       }
 
       "for single geom attribute" >> {
@@ -301,18 +294,18 @@ class IteratorTriggerTest extends Specification {
       val spec = "name:String:index=true,age:Integer:index=true,dtg:Date:index=true,*geom:Geometry:srid=4326"
       val sft = SimpleFeatureTypes.createType(sftName, spec)
       val query = new Query(sftName, Filter.INCLUDE, Array("geom", "dtg", "name"))
-      org.locationtech.geomesa.accumulo.index.setQueryTransforms(query, sft) // normally called by data store when getting feature reader
-      val iteratorChoice = IteratorTrigger.chooseAttributeIterator(None, query, sft, "name")
-      iteratorChoice.iterator mustEqual(IndexOnlyIterator)
+      QueryPlanner.setQueryTransforms(query, sft) // normally called by data store when getting feature reader
+      val iteratorChoice = IteratorTrigger.chooseAttributeIterator(None, query.getHints, sft, "name")
+      iteratorChoice.iterator mustEqual IndexOnlyIterator
     }
     "be run when requesting extra index-encoded attributes" in {
       val sftName = "AttributeIndexIteratorTriggerTest"
       val spec = "name:String:index=true,age:Integer:index-value=true,dtg:Date:index=true,*geom:Geometry:srid=4326"
       val sft = SimpleFeatureTypes.createType(sftName, spec)
       val query = new Query(sftName, ECQL.toFilter("name='bob'"), Array("geom", "dtg", "name", "age"))
-      org.locationtech.geomesa.accumulo.index.setQueryTransforms(query, sft) // normally called by data store when getting feature reader
-      val iteratorChoice = IteratorTrigger.chooseAttributeIterator(None, query, sft, "name")
-      iteratorChoice.iterator mustEqual(IndexOnlyIterator)
+      QueryPlanner.setQueryTransforms(query, sft) // normally called by data store when getting feature reader
+      val iteratorChoice = IteratorTrigger.chooseAttributeIterator(None, query.getHints, sft, "name")
+      iteratorChoice.iterator mustEqual IndexOnlyIterator
     }
   }
 }

@@ -1,3 +1,10 @@
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 package org.locationtech.geomesa.stream.datastore
 
 import java.awt.RenderingHints
@@ -18,7 +25,8 @@ import org.geotools.geometry.jts.ReferencedEnvelope
 import org.geotools.referencing.crs.DefaultGeographicCRS
 import org.locationtech.geomesa.stream.SimpleFeatureStreamSource
 import org.locationtech.geomesa.utils.geotools.Conversions._
-import org.locationtech.geomesa.utils.index.{QuadTreeFeatureStore, SynchronizedQuadtree}
+import org.locationtech.geomesa.utils.geotools.{DFI, DFR, FR}
+import org.locationtech.geomesa.utils.index.{SpatialIndex, QuadTreeFeatureStore, SynchronizedQuadtree}
 import org.opengis.feature.`type`.Name
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.opengis.filter.spatial.{BBOX, BinarySpatialOperator, Within}
@@ -39,7 +47,7 @@ class StreamDataStore(source: SimpleFeatureStreamSource, timeout: Int) extends C
   
   val sft = source.sft
   source.init()
-  val qt = new SynchronizedQuadtree
+  val qt = new SynchronizedQuadtree[SimpleFeature]
 
   val cb =
     CacheBuilder
@@ -104,7 +112,7 @@ class StreamDataStore(source: SimpleFeatureStreamSource, timeout: Int) extends C
 class StreamFeatureStore(entry: ContentEntry,
                          query: Query,
                          features: Cache[String, FeatureHolder],
-                         val qt: SynchronizedQuadtree,
+                         val spatialIndex: SpatialIndex[SimpleFeature],
                          val sft: SimpleFeatureType)
   extends ContentFeatureStore(entry, query) with QuadTreeFeatureStore {
 
@@ -179,7 +187,7 @@ class StreamDataStoreFactory extends DataStoreFactorySpi {
 
   override def createNewDataStore(params: ju.Map[String, java.io.Serializable]): DataStore = ???
   override def getDescription: String = "SimpleFeature Stream Source"
-  override def getParametersInfo: Array[Param] = Array(STREAM_DATASTORE_CONFIG)
+  override def getParametersInfo: Array[Param] = Array(STREAM_DATASTORE_CONFIG, CACHE_TIMEOUT)
   override def getDisplayName: String = "SimpleFeature Stream Source"
   override def canProcess(params: ju.Map[String, java.io.Serializable]): Boolean =
     params.containsKey(STREAM_DATASTORE_CONFIG.key)

@@ -1,37 +1,35 @@
-/*
- * Copyright 2014 Commonwealth Computer Research, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the License);
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/***********************************************************************
+* Copyright (c) 2013-2015 Commonwealth Computer Research, Inc.
+* All rights reserved. This program and the accompanying materials
+* are made available under the terms of the Apache License, Version 2.0 which
+* accompanies this distribution and is available at
+* http://www.opensource.org/licenses/apache2.0.php.
+*************************************************************************/
 
 package org.locationtech.geomesa.accumulo.index
 
 import com.typesafe.scalalogging.slf4j.Logging
+import com.vividsolutions.jts.geom.Coordinate
 import org.geotools.factory.CommonFactoryFinder
 import org.geotools.filter.text.ecql.ECQL
+import org.geotools.geometry.jts.{JTSFactoryFinder, ReferencedEnvelope}
 import org.joda.time.{DateTime, DateTimeZone, Interval}
 import org.junit.runner.RunWith
 import org.locationtech.geomesa.accumulo.filter.TestFilters._
-import org.locationtech.geomesa.accumulo.index.FilterHelper._
+import org.locationtech.geomesa.filter.FilterHelper
+import org.locationtech.geomesa.filter.FilterHelper._
 import org.locationtech.geomesa.utils.filters.Filters._
 import org.opengis.filter.Filter
 import org.specs2.mock.Mockito
 import org.specs2.mutable.Specification
 import org.specs2.runner.JUnitRunner
 
+import scala.util.Random
+
 @RunWith(classOf[JUnitRunner])
 class FilterHelperTest extends Specification with Mockito with Logging {
   val ff = CommonFactoryFinder.getFilterFactory2
+  val gf = JTSFactoryFinder.getGeometryFactory
 
   val min = IndexSchema.minDateTime
   val max = IndexSchema.maxDateTime
@@ -71,11 +69,10 @@ class FilterHelperTest extends Specification with Mockito with Logging {
   def afterInterval(dt: DateTime): Interval   = new Interval(dt, max)
   def beforeInterval(dt: DateTime): Interval  = new Interval(min, dt)
 
-  val extractDT = extractTemporal(Some(dtFieldName))
+  val extractDT: (Seq[Filter]) => Interval = extractInterval(_, Some(dtFieldName))
 
-  def extractInterval(fs: String): Interval = {
+  def extractDateTime(fs: String): Interval = {
     val filter = ECQL.toFilter(fs)
-
     val filters = decomposeAnd(filter)
     extractDT(filters)
   }
@@ -132,6 +129,26 @@ class FilterHelperTest extends Specification with Mockito with Logging {
       }
     }
 
+    "offset dates for during filters" in {
+      forall(dts.combinations(2).map(sortDates)) { case (start, end) =>
+        val filter = during(start, end)
+        val extractedInterval = extractInterval(Seq(filter), Some(dtFieldName), exclusive = true)
+        val expectedInterval = new Interval(start.plusSeconds(1), end.minusSeconds(1))
+        logger.debug(s"Extracted interval $extractedInterval from filter ${ECQL.toCQL(filter)}")
+        extractedInterval must equalTo(expectedInterval)
+      }
+      val r = new Random(-7)
+      forall(dts.combinations(2).map(sortDates)) { case (s, e) =>
+        val start = s.plusMillis(r.nextInt(998) + 1)
+        val end = e.plusMillis(r.nextInt(998) + 1)
+        val filter = during(start, end)
+        val extractedInterval = extractInterval(Seq(filter), Some(dtFieldName), exclusive = true)
+        val expectedInterval = new Interval(s.plusSeconds(1), e)
+        logger.debug(s"Extracted interval $extractedInterval from filter ${ECQL.toCQL(filter)}")
+        extractedInterval must equalTo(expectedInterval)
+      }
+    }
+
     "return date1 to date2 for between filters" in {
       forall(dtPairs) { case (start, end) =>
 
@@ -139,7 +156,7 @@ class FilterHelperTest extends Specification with Mockito with Logging {
 
         val extractedInterval = extractDT(Seq(filter))
         val expectedInterval = new Interval(start, end)
-        println(s"Extracted interval $extractedInterval from filter ${ECQL.toCQL(filter)}")
+        logger.debug(s"Extracted interval $extractedInterval from filter ${ECQL.toCQL(filter)}")
         extractedInterval must equalTo(expectedInterval)
       }
     }
@@ -160,7 +177,7 @@ class FilterHelperTest extends Specification with Mockito with Logging {
         val extractedMixed2Interval = extractDT(mixedFilters2)
 
         val expectedInterval = interval(t1).overlap(interval(t2))
-        println(s"Extracted interval $extractedBetweenInterval from filters ${betweenFilters.map(ECQL.toCQL)}")
+        logger.debug(s"Extracted interval $extractedBetweenInterval from filters ${betweenFilters.map(ECQL.toCQL)}")
         extractedBetweenInterval must equalTo(expectedInterval)
         extractedDuringInterval must equalTo(expectedInterval)
         extractedMixed1Interval must equalTo(expectedInterval)
@@ -337,6 +354,17 @@ class FilterHelperTest extends Specification with Mockito with Logging {
       result.bestFilter must beSome(b)
       result.otherFilters mustEqual Seq(a, c, d)
       result.asInstanceOf[KnownCost].cost mustEqual 5
+    }
+  }
+
+  "tryMergeGeoms" should {
+    "intersect BBOX geoms" >> {
+      implicit def tupleToCoord(t: (Int, Int)): Coordinate = new Coordinate(t._1, t._2)
+      val one = gf.createPolygon(Seq[Coordinate]((1, 1), (4, 1), (4, 4), (1, 4), (1, 1)).toArray)
+      val two = gf.createPolygon(Seq[Coordinate]((1, 1), (2, 1), (2, 2), (1, 2), (1, 1)).toArray)
+      val f1 = ff.bbox(ff.property("geom"), ReferencedEnvelope.reference(one.getEnvelopeInternal))
+      val f2 = ff.bbox(ff.property("geom"), ReferencedEnvelope.reference(two.getEnvelopeInternal))
+      FilterHelper.tryReduceGeometryFilter(Seq(f1, f2)).head must be equalTo(f2)
     }
   }
 }
