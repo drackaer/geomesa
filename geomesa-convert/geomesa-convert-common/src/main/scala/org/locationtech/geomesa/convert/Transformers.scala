@@ -56,7 +56,7 @@ object Transformers extends EnhancedTokenParsers with Logging {
     def cast2int     = expr <~ "::int"     ^^ { e => Cast2Int(e)     }
     def cast2long    = expr <~ "::long"    ^^ { e => Cast2Long(e)    }
     def cast2float   = expr <~ "::float"   ^^ { e => Cast2Float(e)   }
-    def cast2double  = expr <~ "::double"  ^^ { e => Cast2Double(e)  }
+    def cast2double = expr <~ "::double"  ^^ { e => Cast2Double(e) }
     def cast2boolean = expr <~ "::boolean" ^^ { e => Cast2Boolean(e) }
 
     def fieldLookup = "$" ~> ident ^^ { i => FieldLookup(i) }
@@ -157,7 +157,6 @@ object Transformers extends EnhancedTokenParsers with Logging {
   case class LitDouble(value: java.lang.Double) extends Lit[java.lang.Double]
   case class LitBoolean(value: java.lang.Boolean) extends Lit[java.lang.Boolean]
 
-  // TODO Better handling of casts including null handling, etc GEOMESA-982
   case class Cast2Int(e: Expr) extends Expr {
     override def eval(args: Array[Any])(implicit ctx: EvaluationContext): Any = e.eval(args).asInstanceOf[String].toInt
   }
@@ -482,5 +481,43 @@ class MapListFunctionFactory extends TransformerFunctionFactory {
         }.toMap.asJava
     }
   }
+}
+class CastFunctionFactory extends TransformerFunctionFactory {
+  override def functions = Seq(string2double,string2int,string2float,string2long,string2boolean)
 
+  val string2double = TransformerFn("string2double") {
+    args => {
+      if (args(0) == null || args(0).asInstanceOf[String] == "") {
+        if (args(1) == null || args(1).asInstanceOf[String] == "") args(1) else args(1).asInstanceOf[String].toDouble
+      } else args(0).asInstanceOf[String].toDouble
+    }
+  }
+  val string2int = TransformerFn("string2int") {
+    args => {
+      if (args(0) == null || args(0).asInstanceOf[String] == "") {
+        if (args(1) == null || args(1).asInstanceOf[String] == "") args(1) else args(1).asInstanceOf[String].toInt
+      } else args(0).asInstanceOf[String].toInt
+    }
+  }
+  val string2float = TransformerFn("string2float") {
+    args => {
+      if (args(0) == null || args(0).asInstanceOf[String] == "") {
+        if (args(1) == null || args(1).asInstanceOf[String] == "") args(1) else args(1).asInstanceOf[String].toFloat
+      } else args(0).asInstanceOf[String].toFloat
+    }
+  }
+  val string2long = TransformerFn("string2long") {
+    args => {
+      if (args(0) == null || args(0).asInstanceOf[String] == "") {
+        if (args(1) == null || args(1).asInstanceOf[String] == "") args(1) else args(1).asInstanceOf[String].toLong
+      } else args(0).asInstanceOf[String].toLong
+    }
+  }
+  val string2boolean = TransformerFn("string2boolean") {
+    args => {
+      if (args(0) == null || args(0).asInstanceOf[String] == "") {
+        if (args(1) == null || args(1).asInstanceOf[String] == "") args(1) else args(1).asInstanceOf[String].toBoolean
+      } else args(0).asInstanceOf[String].toBoolean
+    }
+  }
 }
